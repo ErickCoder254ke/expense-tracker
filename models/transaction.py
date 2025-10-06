@@ -50,6 +50,9 @@ class TransactionUpdate(BaseModel):
     mpesa_details: Optional[MPesaDetails] = None
     sms_metadata: Optional[SMSMetadata] = None
 
+class SMSParseRequest(BaseModel):
+    message: str
+
 class SMSImportRequest(BaseModel):
     messages: list[str]
     auto_categorize: bool = True

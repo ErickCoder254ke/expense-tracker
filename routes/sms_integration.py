@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from models.transaction import Transaction, TransactionCreate, SMSImportRequest, SMSImportResponse, SMSMetadata
+from models.transaction import Transaction, TransactionCreate, SMSParseRequest, SMSImportRequest, SMSImportResponse, SMSMetadata
 from models.user import Category
 from services.mpesa_parser import MPesaParser
 from services.duplicate_detector import DuplicateDetector
@@ -18,13 +18,13 @@ async def get_db():
 
 @router.post("/parse", response_model=Dict[str, Any])
 async def parse_single_sms(
-    message: str,
+    request: SMSParseRequest,
     db: AsyncIOMotorDatabase = Depends(get_db)
 ):
     """Parse a single SMS message and return transaction details"""
     try:
         # Parse the message
-        parsed_data = MPesaParser.parse_message(message)
+        parsed_data = MPesaParser.parse_message(request.message)
         if not parsed_data:
             raise HTTPException(status_code=400, detail="Message could not be parsed as M-Pesa transaction")
         
