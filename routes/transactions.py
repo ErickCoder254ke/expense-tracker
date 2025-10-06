@@ -71,7 +71,7 @@ async def create_transaction(transaction_data: TransactionCreate, db: AsyncIOMot
             category_id = CategorizationService.auto_categorize(transaction_data.description, categories)
         
         # Verify category exists
-        category_doc = await db.categories.find_one({"_id": category_id})
+        category_doc = await db.categories.find_one({"_id": ObjectId(category_id) if ObjectId.is_valid(category_id) else category_id})
         if not category_doc:
             raise HTTPException(status_code=404, detail="Category not found")
         
@@ -95,7 +95,7 @@ async def create_transaction(transaction_data: TransactionCreate, db: AsyncIOMot
 async def get_transaction(transaction_id: str, db: AsyncIOMotorDatabase = Depends(get_db)):
     """Get a specific transaction"""
     try:
-        doc = await db.transactions.find_one({"_id": transaction_id})
+        doc = await db.transactions.find_one({"_id": ObjectId(transaction_id) if ObjectId.is_valid(transaction_id) else transaction_id})
         if not doc:
             raise HTTPException(status_code=404, detail="Transaction not found")
         

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from models.user import Category, CategoryCreate
 from typing import List
+from bson import ObjectId
 
 router = APIRouter(prefix="/categories", tags=["categories"])
 
@@ -39,7 +40,7 @@ async def delete_category(category_id: str, db: AsyncIOMotorDatabase = Depends(g
     """Delete a category (only non-default categories)"""
     try:
         # Check if category exists and is not default
-        category_doc = await db.categories.find_one({"_id": category_id})
+        category_doc = await db.categories.find_one({"_id": ObjectId(category_id) if ObjectId.is_valid(category_id) else category_id})
         if not category_doc:
             raise HTTPException(status_code=404, detail="Category not found")
         
@@ -52,7 +53,7 @@ async def delete_category(category_id: str, db: AsyncIOMotorDatabase = Depends(g
             raise HTTPException(status_code=400, detail="Cannot delete category with existing transactions")
         
         # Delete category
-        result = await db.categories.delete_one({"_id": category_id})
+        result = await db.categories.delete_one({"_id": ObjectId(category_id) if ObjectId.is_valid(category_id) else category_id})
         if result.deleted_count == 0:
             raise HTTPException(status_code=404, detail="Category not found")
         
