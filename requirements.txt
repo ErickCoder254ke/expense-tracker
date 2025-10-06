@@ -32,6 +32,7 @@ packaging==25.0
 pandas==2.3.2
 passlib==1.7.4
 pathspec==0.12.1
+phonenumbers==8.13.19
 platformdirs==4.4.0
 pluggy==1.6.0
 pyasn1==0.6.1

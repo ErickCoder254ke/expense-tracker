@@ -37,7 +37,7 @@ class StatusCheckCreate(BaseModel):
     client_name: str
 
 # Import route modules
-from routes import auth, transactions, categories
+from routes import auth, transactions, categories, sms_integration
 
 # Add your routes to the router instead of directly to app
 @api_router.get("/")
@@ -58,8 +58,9 @@ async def get_status_checks():
 
 # Include route modules
 api_router.include_router(auth.router)
-api_router.include_router(transactions.router)  
+api_router.include_router(transactions.router)
 api_router.include_router(categories.router)
+api_router.include_router(sms_integration.router)
 
 # Include the router in the main app
 app.include_router(api_router)

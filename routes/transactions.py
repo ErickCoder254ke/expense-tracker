@@ -80,10 +80,16 @@ async def create_transaction(transaction_data: TransactionCreate, db: AsyncIOMot
         transaction_dict['user_id'] = user_id
         transaction_dict['category_id'] = category_id
         transaction = Transaction(**transaction_dict)
-        
+
+        print(f"Creating transaction: {transaction.dict()}")
         result = await db.transactions.insert_one(transaction.dict())
         transaction.id = str(result.inserted_id)
-        
+        print(f"Transaction created with ID: {transaction.id}")
+
+        # Verify it was saved
+        saved_transaction = await db.transactions.find_one({"_id": result.inserted_id})
+        print(f"Saved transaction verification: {saved_transaction}")
+
         return transaction
         
     except HTTPException:
@@ -169,9 +175,24 @@ async def get_analytics_summary(
                 end_date = datetime(now.year + 1, 1, 1) - timedelta(days=1)
             else:
                 end_date = datetime(now.year, now.month + 1, 1) - timedelta(days=1)
-        
+
+        print(f"Analytics query date range: {start_date} to {end_date}")
+
+        # First, let's check if we have any transactions at all
+        total_transactions = await db.transactions.count_documents({})
+        print(f"Total transactions in database: {total_transactions}")
+
+        # Let's also see what transactions exist without date filter
+        all_transactions = await db.transactions.find({}).to_list(100)
+        print(f"Sample transactions: {all_transactions[:3] if all_transactions else 'None'}")
+
         # Build date filter
         date_filter = {"date": {"$gte": start_date, "$lte": end_date}}
+        print(f"Date filter: {date_filter}")
+
+        # Check transactions in date range
+        date_filtered_count = await db.transactions.count_documents(date_filter)
+        print(f"Transactions in date range: {date_filtered_count}")
         
         # Get total income and expenses
         income_pipeline = [
@@ -230,6 +251,31 @@ async def get_analytics_summary(
             "categories": categories_by_category,
             "recent_transactions": recent_transactions
         }
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting analytics: {str(e)}")
+
+@router.get("/debug/database")
+async def debug_database(db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Debug endpoint to check database contents"""
+    try:
+        # Get all transactions
+        all_transactions = await db.transactions.find({}).to_list(100)
+
+        # Get all categories
+        all_categories = await db.categories.find({}).to_list(100)
+
+        # Get all users
+        all_users = await db.users.find({}).to_list(100)
+
+        return {
+            "transactions_count": len(all_transactions),
+            "categories_count": len(all_categories),
+            "users_count": len(all_users),
+            "sample_transactions": all_transactions[:5],
+            "sample_categories": all_categories[:3],
+            "sample_users": all_users[:1] if all_users else []
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting debug info: {str(e)}")
