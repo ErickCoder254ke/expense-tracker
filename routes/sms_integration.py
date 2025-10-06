@@ -23,6 +23,11 @@ async def parse_single_sms(
 ):
     """Parse a single SMS message and return transaction details"""
     try:
+        print(f"DEBUG: Received message: {repr(request.message)}")
+
+        if not request.message:
+            raise HTTPException(status_code=400, detail="Message cannot be empty")
+
         # Parse the message
         parsed_data = MPesaParser.parse_message(request.message)
         if not parsed_data:

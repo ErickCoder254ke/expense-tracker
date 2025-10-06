@@ -66,6 +66,9 @@ class MPesaParser:
         """
         Normalize the message text for consistent parsing
         """
+        if not message:
+            return ""
+
         # Convert to lowercase
         message = message.lower()
         
@@ -188,6 +191,9 @@ class MPesaParser:
         """
         Parse M-Pesa SMS message and extract transaction details
         """
+        if not message or not message.strip():
+            return None
+
         if not cls.is_mpesa_message(message):
             return None
         
@@ -223,28 +229,28 @@ class MPesaParser:
         reference = None
         
         if pattern_type == 'received':
-            recipient = groups[1].strip() if len(groups) > 1 else None
-            phone_number = cls.extract_phone_number(groups[2]) if len(groups) > 2 else None
-            balance_after = cls.extract_amount(groups[3]) if len(groups) > 3 else None
-            transaction_id = groups[4].strip() if len(groups) > 4 else None
+            recipient = groups[1].strip() if len(groups) > 1 and groups[1] else None
+            phone_number = cls.extract_phone_number(groups[2]) if len(groups) > 2 and groups[2] else None
+            balance_after = cls.extract_amount(groups[3]) if len(groups) > 3 and groups[3] else None
+            transaction_id = groups[4].strip() if len(groups) > 4 and groups[4] else None
         elif pattern_type in ['sent', 'paybill', 'till']:
-            recipient = groups[1].strip() if len(groups) > 1 else None
+            recipient = groups[1].strip() if len(groups) > 1 and groups[1] else None
             if pattern_type == 'paybill':
-                reference = groups[2] if len(groups) > 2 else None  # Paybill number
-                balance_after = cls.extract_amount(groups[4]) if len(groups) > 4 else None
-                transaction_id = groups[5].strip() if len(groups) > 5 else None
+                reference = groups[2] if len(groups) > 2 and groups[2] else None  # Paybill number
+                balance_after = cls.extract_amount(groups[4]) if len(groups) > 4 and groups[4] else None
+                transaction_id = groups[5].strip() if len(groups) > 5 and groups[5] else None
             else:
-                balance_after = cls.extract_amount(groups[2]) if len(groups) > 2 else None
-                transaction_id = groups[3].strip() if len(groups) > 3 else None
+                balance_after = cls.extract_amount(groups[2]) if len(groups) > 2 and groups[2] else None
+                transaction_id = groups[3].strip() if len(groups) > 3 and groups[3] else None
         elif pattern_type == 'withdrawal':
-            recipient = groups[1].strip() if len(groups) > 1 else None
-            balance_after = cls.extract_amount(groups[2]) if len(groups) > 2 else None
-            transaction_id = groups[3].strip() if len(groups) > 3 else None
+            recipient = groups[1].strip() if len(groups) > 1 and groups[1] else None
+            balance_after = cls.extract_amount(groups[2]) if len(groups) > 2 and groups[2] else None
+            transaction_id = groups[3].strip() if len(groups) > 3 and groups[3] else None
         elif pattern_type == 'airtime':
-            phone_number = cls.extract_phone_number(groups[1]) if len(groups) > 1 else None
+            phone_number = cls.extract_phone_number(groups[1]) if len(groups) > 1 and groups[1] else None
             recipient = f"Airtime for {phone_number}" if phone_number else "Airtime Purchase"
-            balance_after = cls.extract_amount(groups[2]) if len(groups) > 2 else None
-            transaction_id = groups[3].strip() if len(groups) > 3 else None
+            balance_after = cls.extract_amount(groups[2]) if len(groups) > 2 and groups[2] else None
+            transaction_id = groups[3].strip() if len(groups) > 3 and groups[3] else None
         
         # Determine transaction type
         transaction_type = cls.determine_transaction_type(original_message, pattern_type)
@@ -292,7 +298,7 @@ class MPesaParser:
         
         # Try to extract transaction ID
         transaction_id_match = re.search(r'(?:transaction|receipt|ref)[:\s]*([a-z0-9\-]{6,})', normalized_message)
-        transaction_id = transaction_id_match.group(1) if transaction_id_match else None
+        transaction_id = transaction_id_match.group(1).strip() if transaction_id_match and transaction_id_match.group(1) else None
         
         # Determine transaction type
         transaction_type = cls.determine_transaction_type(original_message, 'generic')
