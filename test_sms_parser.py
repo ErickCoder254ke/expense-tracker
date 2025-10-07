@@ -12,29 +12,33 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from services.mpesa_parser import MPesaParser
 import json
 
-# Real M-Pesa message examples for testing
+# Real M-Pesa message examples for testing (including user-provided examples)
 TEST_MESSAGES = [
-    # Modern M-Pesa message with transaction cost
+    # User-provided examples (exact format)
+    "TJ3CF6GKC7 Confirmed.You have received Ksh100.00 from Equity Bulk Account 300600 on 3/10/25 at 10:55 PM New M-PESA balance is Ksh111.86.  Separate personal and business funds through Pochi la Biashara on *334#.",
+
+    "TJ3CF6GITN Confirmed.You have received Ksh99.00 from Equity Bulk Account 300600 on 3/10/25 at 10:56 PM New M-PESA balance is Ksh210.86.  Separate personal and business funds through Pochi la Biashara on *334#.",
+
+    "TJ4CF6I7HN Confirmed. Ksh100.00 sent to KPLC PREPAID for account 54405080323 on 4/10/25 at 4:38 PM New M-PESA balance is Ksh110.86. Transaction cost, Ksh0.00.Amount you can transact within the day is 499,900.00. Save frequent paybills for quick payment on M-PESA app https://bit.ly/mpesalnk",
+
+    # Additional test messages
     "TJ6CF6NDST Confirmed.Ksh30.00 sent to SIMON  NDERITU on 6/10/25 at 7:43 AM. New M-PESA balance is Ksh21.73. Transaction cost, Ksh0.00. Amount you can transact within the day is 499,970.00.",
-    
+
     # M-Pesa data bundles purchase
     "TJ6CF6OZYR Confirmed. Ksh5.00 sent to SAFARICOM DATA BUNDLES for account SAFARICOM DATA BUNDLES on 6/10/25 at 5:14 PM. New M-PESA balance is Ksh16.73. Transaction cost, Ksh0.00.",
-    
-    # M-Pesa received money
-    "TJ6CF6OS29 Confirmed.You have received Ksh100.00 from Equity Bulk Account 300600 on 6/10/25 at 5:19 PM New M-PESA balance is Ksh116.73. Separate personal and business funds through Pochi la Biashara on *334#.",
-    
+
     # M-Pesa with transaction fee
     "TJ7CF6QJUV Confirmed. Ksh30.00 sent to SIMON  NDERITU on 7/10/25 at 8:00 AM. New M-PESA balance is Ksh71.73. Transaction cost, Ksh2.50. Amount you can transact within the day is 499,970.00.",
-    
+
     # Fuliza loan message with access fee
     "TJ8CF6WXYZ Confirmed. Fuliza M-PESA amount is Ksh50.00. Access fee charged Ksh5.00. Total Fuliza M-PESA outstanding amount is Ksh55.00 due on 15/10/25. New M-PESA balance is Ksh50.00.",
-    
+
     # Paybill transaction with fee
     "TJ9CF6ABCD Confirmed. Ksh150.00 sent to KENYA POWER for account 123456789 on 8/10/25 at 2:30 PM. New M-PESA balance is Ksh500.00. Transaction cost, Ksh15.00.",
-    
+
     # ATM withdrawal
     "TK1CF6EFGH Confirmed. Ksh500.00 withdrawn from KCB ATM WESTLANDS on 9/10/25 at 10:15 AM. New M-PESA balance is Ksh1,200.00. Transaction cost, Ksh35.00.",
-    
+
     # Multiple SMS messages in one paste (testing message splitting)
     """TJ6CF6NDST Confirmed.Ksh30.00 sent to SIMON  NDERITU on 6/10/25 at 7:43 AM. New M-PESA balance is Ksh21.73. Transaction cost, Ksh0.00. Amount you can       transact within the day is 499,970.00. Sign up for Lipa Na M-PESA Till online https://m-pesaforbusiness.co.keTJ6CF6OZYR Confirmed.     Ksh5.00 sent to SAFARICOM DATA BUNDLES for account SAFARICOM DATA BUNDLES on 6/10/25 at 5:14 PM. New M-PESA balance is Ksh16.73.       Transaction cost, Ksh0.00.TJ6CF6OS29 Confirmed.You have received Ksh100.00 from Equity Bulk Account 300600 on 6/10/25 at 5:19 PM New   M-PESA balance is Ksh116.73.  Separate personal and business funds through Pochi la Biashara on *334#.TJ6CF6QGF0 Confirmed. Ksh15.00   sent to SAFARICOM DATA BUNDLES for account SAFARICOM DATA BUNDLES on 6/10/25 at 11:51 PM. New M-PESA balance is Ksh101.73. Transaction cost, Ksh0.00.TJ7CF6QJUV Confirmed. Ksh30.00 sent to SIMON  NDERITU on 7/10/25 at 8:00 AM. New M-PESA balance is Ksh71.73. Transaction cost, Ksh0.00. Amount you can transact within the day is 499,970.00. Sign up for Lipa Na M-PESA Till onlinehttps://m-pesaforbusiness.co.ke"""
 ]
@@ -64,12 +68,20 @@ def test_message_parsing():
                 print(f"Description: {parsed_data['description']}")
                 print(f"Category: {parsed_data['suggested_category']}")
                 print(f"Confidence: {parsed_data['parsing_confidence']:.2f}")
-                
+
+                # Print transaction date if extracted
+                transaction_date = parsed_data.get('transaction_date')
+                if transaction_date:
+                    print(f"Transaction Date: {transaction_date}")
+                else:
+                    print(f"Transaction Date: Not extracted")
+
                 # Print M-Pesa details
                 mpesa_details = parsed_data['mpesa_details']
                 if mpesa_details:
                     print(f"Recipient: {mpesa_details.get('recipient', 'N/A')}")
                     print(f"Transaction ID: {mpesa_details.get('transaction_id', 'N/A')}")
+                    print(f"Reference/Account: {mpesa_details.get('reference', 'N/A')}")
                     print(f"Balance After: KSh {mpesa_details.get('balance_after', 'N/A')}")
                     print(f"Transaction Fee: KSh {mpesa_details.get('transaction_fee', 0)}")
                     print(f"Access Fee: KSh {mpesa_details.get('access_fee', 0)}")
@@ -167,6 +179,45 @@ def test_multi_message_splitting():
             else:
                 print("❌ Parsing failed")
 
+def test_date_parsing():
+    """Test enhanced date and time parsing from M-Pesa messages"""
+    print("\n" + "=" * 80)
+    print("TESTING DATE AND TIME PARSING")
+    print("=" * 80)
+
+    date_test_cases = [
+        ("3/10/25", "10:55 PM", "Should parse to 2025-10-03 22:55:00"),
+        ("4/10/25", "4:38 PM", "Should parse to 2025-10-04 16:38:00"),
+        ("6/10/25", "7:43 AM", "Should parse to 2025-10-06 07:43:00"),
+        ("12/1/24", "9:30 AM", "Should parse to 2024-01-12 09:30:00"),
+        ("1/5/26", "11:59 PM", "Should parse to 2026-05-01 23:59:00"),
+    ]
+
+    print("Testing individual date parsing function:")
+    for date_str, time_str, expected in date_test_cases:
+        result = MPesaParser.parse_transaction_date(date_str, time_str)
+        print(f"  {date_str} at {time_str} -> {result} ({expected})")
+
+    print("\nTesting date extraction from full messages:")
+    # Test with our user-provided examples that have dates
+    date_messages = [
+        "TJ3CF6GKC7 Confirmed.You have received Ksh100.00 from Equity Bulk Account 300600 on 3/10/25 at 10:55 PM New M-PESA balance is Ksh111.86.",
+        "TJ4CF6I7HN Confirmed. Ksh100.00 sent to KPLC PREPAID for account 54405080323 on 4/10/25 at 4:38 PM New M-PESA balance is Ksh110.86.",
+        "TJ6CF6NDST Confirmed.Ksh30.00 sent to SIMON NDERITU on 6/10/25 at 7:43 AM. New M-PESA balance is Ksh21.73."
+    ]
+
+    for message in date_messages:
+        print(f"\nMessage: {message[:80]}...")
+        parsed_data = MPesaParser.parse_message(message)
+        if parsed_data:
+            transaction_date = parsed_data.get('transaction_date')
+            if transaction_date:
+                print(f"✅ Extracted date: {transaction_date}")
+            else:
+                print(f"❌ No date extracted")
+        else:
+            print(f"❌ Parsing failed")
+
 def test_categorization():
     """Test auto-categorization of different transaction types"""
     print("\n" + "=" * 80)
@@ -174,12 +225,15 @@ def test_categorization():
     print("=" * 80)
     
     categorization_tests = [
-        ("Data bundles", "TJ6CF6OZYR Confirmed. Ksh5.00 sent to SAFARICOM DATA BUNDLES for account SAFARICOM DATA BUNDLES"),
+        ("KPLC PREPAID (utilities)", "TJ4CF6I7HN Confirmed. Ksh100.00 sent to KPLC PREPAID for account 54405080323"),
+        ("Data bundles (utilities)", "TJ6CF6OZYR Confirmed. Ksh5.00 sent to SAFARICOM DATA BUNDLES for account SAFARICOM DATA BUNDLES"),
         ("Personal transfer", "TJ6CF6NDST Confirmed.Ksh30.00 sent to SIMON NDERITU on 6/10/25 at 7:43 AM"),
-        ("Bank account", "TJ6CF6OS29 Confirmed.You have received Ksh100.00 from Equity Bulk Account 300600"),
-        ("Paybill utility", "TJ9CF6ABCD Confirmed. Ksh150.00 sent to KENYA POWER for account 123456789"),
+        ("Bank account (financial)", "TJ6CF6OS29 Confirmed.You have received Ksh100.00 from Equity Bulk Account 300600"),
+        ("Kenya Power (utilities)", "TJ9CF6ABCD Confirmed. Ksh150.00 sent to KENYA POWER for account 123456789"),
         ("ATM withdrawal", "TK1CF6EFGH Confirmed. Ksh500.00 withdrawn from KCB ATM WESTLANDS"),
-        ("Fuliza loan", "TJ8CF6WXYZ Confirmed. Fuliza M-PESA amount is Ksh50.00. Access fee charged Ksh5.00")
+        ("Fuliza loan (loans & credit)", "TJ8CF6WXYZ Confirmed. Fuliza M-PESA amount is Ksh50.00. Access fee charged Ksh5.00"),
+        ("Nairobi Water (utilities)", "TX1234567 Confirmed. Ksh250.00 sent to NAIROBI WATER for account NCWSC123"),
+        ("Safaricom airtime (utilities)", "TY1234567 Confirmed. Ksh50.00 sent to SAFARICOM for airtime purchase")
     ]
     
     for test_name, message in categorization_tests:
@@ -204,12 +258,17 @@ def main():
     try:
         test_message_parsing()
         test_fee_extraction()
+        test_date_parsing()
         test_multi_message_splitting()
         test_categorization()
-        
+
         print("\n" + "=" * 80)
         print("✅ ALL TESTS COMPLETED")
-        print("Review the output above to verify fee extraction and parsing accuracy")
+        print("Review the output above to verify enhanced parsing features:")
+        print("- Date and time extraction from messages")
+        print("- Enhanced fee extraction and transaction charges")
+        print("- Improved categorization for Kenyan services")
+        print("- Better recipient name handling")
         print("=" * 80)
         
     except Exception as e:

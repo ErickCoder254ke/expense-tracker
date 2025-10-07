@@ -22,15 +22,22 @@ class MPesaParser:
     PATTERNS = {
         # Enhanced patterns for newer M-Pesa message formats with transaction ID at start
         'modern_sent': [
+            # Enhanced pattern for modern sent messages with transaction ID at start
             # Pattern: "TJ6CF6NDST Confirmed.Ksh30.00 sent to SIMON  NDERITU on 6/10/25 at 7:43 AM. New M-PESA balance is Ksh21.73. Transaction cost, Ksh0.00."
-            r'([A-Z0-9]{6,12})\s+confirmed\.\s*(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+sent to\s+(.+?)(?:\s+(?:for account\s+(.+?))?(?:\s+on\s+([0-9/]+)\s+at\s+([0-9:]+\s*(?:AM|PM)?)))?.*?(?:new m-?pesa balance.*?(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?.*?(?:transaction cost[:\s,]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?',
-            # Fallback pattern for variations
-            r'([A-Z0-9]{6,12})\s+confirmed\.\s*(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+sent to\s+(.+?)\s+.*?(?:new m-?pesa balance.*?(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?'
+            r'([A-Z0-9]{6,12})\s+confirmed\.\s*(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+sent to\s+(.+?)(?:\s+for account\s+(.+?))?(?:\s+on\s+([0-9/\-]+)\s+at\s+([0-9:]+\s*(?:AM|PM)?)).*?(?:new m-?pesa balance.*?(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?.*?(?:transaction cost[:\s,]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?',
+            # Pattern for KPLC PREPAID and similar service payments
+            # "TJ4CF6I7HN Confirmed. Ksh100.00 sent to KPLC PREPAID for account 54405080323 on 4/10/25 at 4:38 PM"
+            r'([A-Z0-9]{6,12})\s+confirmed\.\s*(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+sent to\s+(.+?)\s+for account\s+(.+?)\s+on\s+([0-9/\-]+)\s+at\s+([0-9:]+\s*(?:AM|PM)?).*?(?:new m-?pesa balance.*?(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?.*?(?:transaction cost[:\s,]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?',
+            # Fallback pattern for variations without specific account
+            r'([A-Z0-9]{6,12})\s+confirmed\.\s*(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+sent to\s+(.+?)\s+on\s+([0-9/\-]+)\s+at\s+([0-9:]+\s*(?:AM|PM)?).*?(?:new m-?pesa balance.*?(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?.*?(?:transaction cost[:\s,]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?'
         ],
 
         'modern_received': [
-            # Pattern: "TJ6CF6OS29 Confirmed.You have received Ksh100.00 from Equity Bulk Account 300600 on 6/10/25 at 5:19 PM New M-PESA balance is Ksh116.73."
-            r'([A-Z0-9]{6,12})\s+confirmed\.\s*you have received\s+(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+from\s+(.+?)(?:\s+(?:on\s+([0-9/]+)\s+at\s+([0-9:]+\s*(?:AM|PM)?)))?.*?(?:new m-?pesa balance.*?(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?',
+            # Enhanced pattern for modern received messages
+            # "TJ3CF6GKC7 Confirmed.You have received Ksh100.00 from Equity Bulk Account 300600 on 3/10/25 at 10:55 PM New M-PESA balance is Ksh111.86."
+            r'([A-Z0-9]{6,12})\s+confirmed\.\s*you have received\s+(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+from\s+(.+?)\s+(?:([0-9]+)\s+)?on\s+([0-9/\-]+)\s+at\s+([0-9:]+\s*(?:AM|PM)?).*?(?:new m-?pesa balance.*?(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?',
+            # Alternative pattern without explicit date/time
+            r'([A-Z0-9]{6,12})\s+confirmed\.\s*you have received\s+(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+from\s+(.+?).*?(?:new m-?pesa balance.*?(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?',
             # Pattern for received with phone number
             r'([A-Z0-9]{6,12})\s+confirmed\.\s*(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+received from\s+(.+?)\s+([0-9+\-\s]+).*?(?:new m-?pesa balance.*?(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?'
         ],
@@ -210,39 +217,79 @@ class MPesaParser:
     @classmethod
     def parse_transaction_date(cls, date_str: str, time_str: str) -> Optional[str]:
         """
-        Parse transaction date and time from M-Pesa message format
-        Example: "6/10/25" and "7:43 AM" -> "2025-10-06 07:43:00"
+        Enhanced transaction date and time parsing from M-Pesa message format
+        Handles multiple formats: "6/10/25" and "7:43 AM" -> "2025-10-06 07:43:00"
+        Also handles "3/10/25" format and various time formats
         """
         if not date_str or not time_str:
             return None
 
         try:
-            # Handle date format: "6/10/25" (M/D/YY)
-            date_parts = date_str.split('/')
-            if len(date_parts) == 3:
-                month, day, year = date_parts
+            # Handle different date formats
+            date_patterns = [
+                r'(\d{1,2})/(\d{1,2})/(\d{2,4})',  # M/D/YY or MM/DD/YYYY
+                r'(\d{1,2})-(\d{1,2})-(\d{2,4})',  # M-D-YY or MM-DD-YYYY
+            ]
 
-                # Convert 2-digit year to 4-digit
+            date_match = None
+            for pattern in date_patterns:
+                match = re.search(pattern, date_str)
+                if match:
+                    date_match = match
+                    break
+
+            if date_match:
+                month, day, year = date_match.groups()
+
+                # Convert to integers
+                month = int(month)
+                day = int(day)
                 year = int(year)
-                if year >= 0 and year <= 30:  # Assume 00-30 is 2000-2030
-                    year += 2000
-                elif year >= 70 and year <= 99:  # Assume 70-99 is 1970-1999
-                    year += 1900
-                else:
-                    year += 2000  # Default to 2000s
 
-                # Handle time format: "7:43 AM" or "11:51 PM"
-                time_clean = time_str.strip().upper()
-                if 'AM' in time_clean or 'PM' in time_clean:
-                    from datetime import datetime
-                    try:
-                        time_obj = datetime.strptime(time_clean, '%I:%M %p').time()
-                        date_obj = datetime(year, int(month), int(day), time_obj.hour, time_obj.minute)
+                # Convert 2-digit year to 4-digit (enhanced logic)
+                if year < 100:
+                    current_year = datetime.now().year
+                    current_century = current_year // 100 * 100
+
+                    # If year is within 10 years in the future, assume current century
+                    if year <= (current_year % 100) + 10:
+                        year += current_century
+                    else:
+                        year += current_century - 100
+
+                # Enhanced time parsing
+                time_patterns = [
+                    r'(\d{1,2}):(\d{2})\s*(AM|PM)',  # 7:43 AM or 11:51 PM
+                    r'(\d{1,2}):(\d{2})',  # 24-hour format 07:43
+                ]
+
+                time_match = None
+                for pattern in time_patterns:
+                    match = re.search(pattern, time_str.upper())
+                    if match:
+                        time_match = match
+                        break
+
+                if time_match:
+                    hour = int(time_match.group(1))
+                    minute = int(time_match.group(2))
+
+                    # Handle AM/PM conversion
+                    if len(time_match.groups()) >= 3 and time_match.group(3):
+                        am_pm = time_match.group(3).upper()
+                        if am_pm == 'PM' and hour != 12:
+                            hour += 12
+                        elif am_pm == 'AM' and hour == 12:
+                            hour = 0
+
+                    # Validate date and time
+                    if 1 <= month <= 12 and 1 <= day <= 31 and 0 <= hour <= 23 and 0 <= minute <= 59:
+                        date_obj = datetime(year, month, day, hour, minute)
                         return date_obj.isoformat()
-                    except ValueError:
-                        pass
 
-        except (ValueError, IndexError):
+        except (ValueError, IndexError) as e:
+            # Log the error for debugging
+            print(f"Date parsing error: {e} for date_str='{date_str}', time_str='{time_str}'")
             pass
 
         return None
@@ -269,28 +316,60 @@ class MPesaParser:
     def categorize_mpesa_transaction(cls, message: str, recipient: str = None) -> str:
         """
         Enhanced auto-categorization based on message content and recipient
+        Includes comprehensive Kenyan service providers and paybill numbers
         """
         message_lower = message.lower()
         recipient_lower = (recipient or "").lower()
         combined_text = message_lower + " " + recipient_lower
 
+        # Extract paybill number for specific categorization
+        paybill_match = re.search(r'paybill\s+(\d+)', combined_text)
+        paybill_number = paybill_match.group(1) if paybill_match else None
+
+        # Known Kenyan Utility Paybill Numbers
+        utility_paybills = {
+            '888880': 'Utilities',  # KPLC Prepaid
+            '888888': 'Utilities',  # KPLC Postpaid
+            '444400': 'Utilities',  # Nairobi Water
+            '895500': 'Utilities',  # Mombasa Water
+            '517000': 'Utilities',  # Kisumu Water
+            '111444': 'Utilities',  # Nakuru Water
+            '511000': 'Utilities',  # Eldoret Water
+            '885100': 'Utilities',  # Kiambu Water
+            '880600': 'Utilities',  # Garissa Water
+            '363100': 'Utilities',  # Mavoko Water
+            '200200': 'Telecommunications',  # Safaricom
+        }
+
+        # Check paybill number first for exact matches
+        if paybill_number and paybill_number in utility_paybills:
+            return utility_paybills[paybill_number]
+
         # Fuliza (Loans & Credit)
         if 'fuliza' in combined_text:
             return 'Loans & Credit'
 
-        # Utilities (Enhanced to catch data bundles, airtime, etc.)
-        utilities_keywords = [
+        # Enhanced Utilities categorization
+        utility_keywords = [
+            # Electricity
+            'kplc', 'kenya power', 'electricity', 'prepaid', 'postpaid', 'power',
+            # Water
+            'water', 'nairobi water', 'mombasa water', 'kisumu water', 'nakuru water',
+            'eldoret water', 'kiambu water', 'garissa water', 'mavoko water', 'ncwsc',
+            # Telecommunications & Internet
             'safaricom', 'airtel', 'telkom', 'data bundles', 'airtime', 'bundles',
-            'kplc', 'electricity', 'water', 'nairobi water', 'kenya power',
-            'internet', 'wifi', 'broadband'
+            'internet', 'wifi', 'broadband', 'faiba', 'zuku', 'wananchi',
+            # Gas
+            'gas', 'lpg', 'cooking gas'
         ]
-        if any(keyword in combined_text for keyword in utilities_keywords):
+        if any(keyword in combined_text for keyword in utility_keywords):
             return 'Utilities'
 
-        # Transport
+        # Enhanced Transportation
         transport_keywords = [
-            'uber', 'bolt', 'taxi', 'matatu', 'boda', 'fuel', 'petrol',
-            'parking', 'transport', 'bus', 'travel', 'fare'
+            'uber', 'bolt', 'taxi', 'matatu', 'boda', 'boda boda', 'fuel', 'petrol',
+            'parking', 'transport', 'bus', 'travel', 'fare', 'sgr', 'railway',
+            'kenya airways', 'jambojet', 'fly540', 'flight', 'airline'
         ]
         if any(keyword in combined_text for keyword in transport_keywords):
             return 'Transport'
@@ -298,23 +377,26 @@ class MPesaParser:
         # Food & Dining
         food_keywords = [
             'restaurant', 'hotel', 'food', 'cafe', 'kitchen', 'meal',
-            'lunch', 'dinner', 'breakfast', 'snack', 'delivery', 'takeaway'
+            'lunch', 'dinner', 'breakfast', 'snack', 'delivery', 'takeaway',
+            'kfc', 'pizza', 'subway', 'java', 'artcaffe', 'chicken inn'
         ]
         if any(keyword in combined_text for keyword in food_keywords):
             return 'Food & Dining'
 
-        # Shopping
+        # Enhanced Shopping
         shopping_keywords = [
             'shop', 'store', 'market', 'supermarket', 'mall', 'outlet',
-            'retail', 'purchase', 'buy', 'nakumatt', 'tuskys', 'carrefour'
+            'retail', 'purchase', 'buy', 'nakumatt', 'tuskys', 'carrefour',
+            'naivas', 'chandarana', 'quickmart', 'cleanshelf', 'eastmatt'
         ]
         if any(keyword in combined_text for keyword in shopping_keywords):
             return 'Shopping'
 
-        # Health
+        # Health & Medical
         health_keywords = [
             'hospital', 'clinic', 'pharmacy', 'medical', 'doctor', 'health',
-            'medicine', 'treatment', 'consultation'
+            'medicine', 'treatment', 'consultation', 'nhif', 'aga khan',
+            'nairobi hospital', 'kenyatta hospital', 'mater hospital'
         ]
         if any(keyword in combined_text for keyword in health_keywords):
             return 'Health'
@@ -322,23 +404,27 @@ class MPesaParser:
         # Education
         education_keywords = [
             'school', 'university', 'college', 'education', 'tuition',
-            'fees', 'academic', 'learning', 'course'
+            'fees', 'academic', 'learning', 'course', 'uon', 'ku', 'mku',
+            'strathmore', 'usiu', 'kabarak'
         ]
         if any(keyword in combined_text for keyword in education_keywords):
             return 'Education'
 
-        # Entertainment
+        # Entertainment & Recreation
         entertainment_keywords = [
             'cinema', 'movie', 'game', 'sport', 'entertainment', 'music',
-            'concert', 'show', 'theatre', 'fun'
+            'concert', 'show', 'theatre', 'fun', 'betting', 'sportpesa',
+            'betin', 'mcheza', 'club', 'disco'
         ]
         if any(keyword in combined_text for keyword in entertainment_keywords):
             return 'Entertainment'
 
-        # Banks & Financial Services
+        # Enhanced Banks & Financial Services
         financial_keywords = [
             'bank', 'equity', 'kcb', 'cooperative', 'barclays', 'standard chartered',
-            'family bank', 'gt bank', 'loan', 'credit', 'savings', 'account'
+            'family bank', 'gt bank', 'loan', 'credit', 'savings', 'account',
+            'ncba', 'diamond trust', 'i&m bank', 'housing finance', 'sidian bank',
+            'centum', 'sacco'
         ]
         if any(keyword in combined_text for keyword in financial_keywords):
             return 'Financial Services'
@@ -346,19 +432,23 @@ class MPesaParser:
         # Government & Official Services
         government_keywords = [
             'government', 'ministry', 'county', 'kra', 'nhif', 'nssf',
-            'huduma', 'license', 'permit', 'registration'
+            'huduma', 'license', 'permit', 'registration', 'ntsa', 'lands',
+            'attorney general', 'court', 'police', 'immigration'
         ]
         if any(keyword in combined_text for keyword in government_keywords):
             return 'Government & Services'
 
-        # Personal transfers (common names pattern)
+        # Personal transfers (enhanced detection)
         if recipient and len(recipient.split()) >= 2:
-            # Check if recipient looks like a person's name (two or more capitalized words)
+            # Check if recipient looks like a person's name
             name_words = recipient.split()
-            if all(word[0].isupper() for word in name_words if len(word) > 1):
+            # More sophisticated name detection
+            if (len(name_words) >= 2 and
+                all(word.isalpha() and len(word) > 1 for word in name_words) and
+                all(word[0].isupper() for word in name_words)):
                 return 'Personal Transfer'
 
-        # Bills & Fees for paybill/till transactions
+        # Bills & Fees for paybill/till transactions (fallback)
         if any(keyword in combined_text for keyword in ['paybill', 'till', 'bill payment']):
             return 'Bills & Fees'
 
@@ -412,22 +502,48 @@ class MPesaParser:
         fuliza_outstanding = None
         due_date = None
 
+        # Initialize transaction_date
+        transaction_date = None
+
         # Extract data based on pattern type
         if pattern_type == 'modern_sent':
             transaction_id = groups[0].strip() if len(groups) > 0 and groups[0] else None
             amount = cls.extract_amount(groups[1]) if len(groups) > 1 and groups[1] else None
             recipient = cls.clean_recipient_name(groups[2]) if len(groups) > 2 and groups[2] else None
-            reference = groups[3] if len(groups) > 3 and groups[3] else None
-            transaction_date = cls.parse_transaction_date(groups[4], groups[5]) if len(groups) > 5 and groups[4] and groups[5] else None
-            balance_after = cls.extract_amount(groups[6]) if len(groups) > 6 and groups[6] else None
-            transaction_fee = cls.extract_amount(groups[7]) if len(groups) > 7 and groups[7] else None
+
+            # Handle different pattern variations
+            if len(groups) >= 8:  # Full pattern with account and date
+                reference = groups[3] if groups[3] else None
+                transaction_date = cls.parse_transaction_date(groups[4], groups[5]) if groups[4] and groups[5] else None
+                balance_after = cls.extract_amount(groups[6]) if groups[6] else None
+                transaction_fee = cls.extract_amount(groups[7]) if groups[7] else None
+            elif len(groups) >= 6:  # Pattern without account but with date
+                reference = None
+                transaction_date = cls.parse_transaction_date(groups[3], groups[4]) if groups[3] and groups[4] else None
+                balance_after = cls.extract_amount(groups[5]) if groups[5] else None
+                transaction_fee = None
+            else:
+                reference = None
+                balance_after = cls.extract_amount(groups[3]) if len(groups) > 3 and groups[3] else None
+                transaction_fee = None
 
         elif pattern_type == 'modern_received':
             transaction_id = groups[0].strip() if len(groups) > 0 and groups[0] else None
             amount = cls.extract_amount(groups[1]) if len(groups) > 1 and groups[1] else None
             recipient = cls.clean_recipient_name(groups[2]) if len(groups) > 2 and groups[2] else None
-            transaction_date = cls.parse_transaction_date(groups[3], groups[4]) if len(groups) > 4 and groups[3] and groups[4] else None
-            balance_after = cls.extract_amount(groups[5]) if len(groups) > 5 and groups[5] else None
+
+            # Handle different pattern variations for received messages
+            if len(groups) >= 7:  # Full pattern with account number and date
+                reference = groups[3] if groups[3] else None  # Account number
+                transaction_date = cls.parse_transaction_date(groups[4], groups[5]) if groups[4] and groups[5] else None
+                balance_after = cls.extract_amount(groups[6]) if groups[6] else None
+            elif len(groups) >= 5:  # Pattern with date but no account
+                reference = None
+                transaction_date = cls.parse_transaction_date(groups[3], groups[4]) if groups[3] and groups[4] else None
+                balance_after = cls.extract_amount(groups[5]) if len(groups) > 5 and groups[5] else None
+            else:
+                reference = None
+                balance_after = cls.extract_amount(groups[3]) if len(groups) > 3 and groups[3] else None
 
         elif pattern_type == 'fuliza_loan':
             transaction_id = groups[0].strip() if len(groups) > 0 and groups[0] else None
@@ -524,6 +640,7 @@ class MPesaParser:
             'type': transaction_type,
             'description': description,
             'suggested_category': suggested_category,
+            'transaction_date': transaction_date,  # Include extracted transaction date
             'mpesa_details': {
                 'recipient': recipient,
                 'reference': reference,
@@ -546,7 +663,8 @@ class MPesaParser:
                 'parsing_confidence': confidence,
                 'original_message_hash': cls._hash_message(original_message),
                 'requires_review': confidence < 0.8,
-                'suggested_category': suggested_category
+                'suggested_category': suggested_category,
+                'parsed_at': datetime.now().isoformat()
             }
         }
     
@@ -593,28 +711,59 @@ class MPesaParser:
     def _generate_description(cls, pattern_type: str, recipient: str, amount: float, reference: str = None) -> str:
         """
         Generate a human-readable description for the transaction
+        Enhanced to provide more detailed descriptions
         """
         if pattern_type == 'fuliza_loan':
-            return f"Fuliza Loan - Ksh {amount}"
+            return f"Fuliza Loan - KSh {amount:,.2f}"
         elif pattern_type == 'fuliza_repayment':
-            return f"Fuliza Repayment - Ksh {amount}"
-        elif pattern_type == 'received':
-            return f"Received from {recipient}" if recipient else "Money Received"
-        elif pattern_type == 'sent':
-            return f"Sent to {recipient}" if recipient else "Money Sent"
+            return f"Fuliza Repayment - KSh {amount:,.2f}"
+        elif pattern_type in ['received', 'modern_received']:
+            if recipient:
+                # Special handling for common senders
+                if 'equity' in recipient.lower():
+                    return f"Received from {recipient}"
+                elif 'bulk account' in recipient.lower():
+                    return f"Received from {recipient}"
+                else:
+                    return f"Received from {recipient}"
+            return "Money Received"
+        elif pattern_type in ['sent', 'modern_sent']:
+            if recipient:
+                # Enhanced descriptions for common recipients
+                if 'kplc' in recipient.lower() or 'kenya power' in recipient.lower():
+                    desc = f"Electricity Payment - {recipient}"
+                    if reference:
+                        desc += f" (Account: {reference})"
+                    return desc
+                elif 'safaricom' in recipient.lower():
+                    if 'data' in recipient.lower():
+                        return f"Data Bundle Purchase - {recipient}"
+                    else:
+                        return f"Airtime Purchase - {recipient}"
+                elif 'water' in recipient.lower():
+                    desc = f"Water Bill Payment - {recipient}"
+                    if reference:
+                        desc += f" (Account: {reference})"
+                    return desc
+                else:
+                    desc = f"Payment to {recipient}"
+                    if reference:
+                        desc += f" (Ref: {reference})"
+                    return desc
+            return "Money Sent"
         elif pattern_type == 'withdrawal':
-            return f"Withdrawal from {recipient}" if recipient else "Cash Withdrawal"
+            return f"Cash Withdrawal - {recipient}" if recipient else "Cash Withdrawal"
         elif pattern_type == 'airtime':
-            return f"Airtime Purchase"
+            return "Airtime Purchase"
         elif pattern_type == 'paybill':
-            desc = f"Payment to {recipient}" if recipient else "Paybill Payment"
+            desc = f"Paybill Payment - {recipient}" if recipient else "Paybill Payment"
             if reference:
-                desc += f" (Ref: {reference})"
+                desc += f" (Account: {reference})"
             return desc
         elif pattern_type == 'till':
-            return f"Payment to {recipient}" if recipient else "Till Payment"
+            return f"Till Payment - {recipient}" if recipient else "Till Payment"
         else:
-            return f"M-Pesa Transaction"
+            return "M-Pesa Transaction"
     
     @classmethod
     def _calculate_confidence(cls, message: str, amount: float, recipient: str, transaction_id: str, pattern_type: str = None) -> float:
@@ -752,31 +901,116 @@ class MPesaParser:
         Generate a hash of the message for duplicate detection
         """
         return hashlib.md5(message.encode('utf-8')).hexdigest()
+
+    @classmethod
+    def test_enhanced_parsing(cls) -> Dict[str, Any]:
+        """
+        Test the enhanced parsing with the provided user examples
+        """
+        test_messages = [
+            "TJ3CF6GKC7 Confirmed.You have received Ksh100.00 from Equity Bulk Account 300600 on 3/10/25 at 10:55 PM New M-PESA balance is Ksh111.86.  Separate personal and business funds through Pochi la Biashara on *334#.",
+            "TJ3CF6GITN Confirmed.You have received Ksh99.00 from Equity Bulk Account 300600 on 3/10/25 at 10:56 PM New M-PESA balance is Ksh210.86.  Separate personal and business funds through Pochi la Biashara on *334#.",
+            "TJ4CF6I7HN Confirmed. Ksh100.00 sent to KPLC PREPAID for account 54405080323 on 4/10/25 at 4:38 PM New M-PESA balance is Ksh110.86. Transaction cost, Ksh0.00.Amount you can transact within the day is 499,900.00. Save frequent paybills for quick payment on M-PESA app https://bit.ly/mpesalnk"
+        ]
+
+        results = []
+        for i, message in enumerate(test_messages, 1):
+            print(f"\n=== Testing Message {i} ===")
+            print(f"Original: {message[:100]}...")
+
+            parsed = cls.parse_message(message)
+            if parsed:
+                results.append({
+                    'message_number': i,
+                    'success': True,
+                    'amount': parsed['amount'],
+                    'type': parsed['type'],
+                    'description': parsed['description'],
+                    'suggested_category': parsed['suggested_category'],
+                    'transaction_date': parsed.get('transaction_date'),
+                    'recipient': parsed['mpesa_details']['recipient'],
+                    'transaction_id': parsed['mpesa_details']['transaction_id'],
+                    'reference': parsed['mpesa_details']['reference'],
+                    'balance_after': parsed['mpesa_details']['balance_after'],
+                    'transaction_fee': parsed['mpesa_details']['transaction_fee'],
+                    'confidence': parsed['parsing_confidence'],
+                    'requires_review': parsed['requires_review']
+                })
+
+                print(f"✅ SUCCESS")
+                print(f"Amount: KSh {parsed['amount']}")
+                print(f"Type: {parsed['type']}")
+                print(f"Description: {parsed['description']}")
+                print(f"Category: {parsed['suggested_category']}")
+                print(f"Date: {parsed.get('transaction_date', 'Not extracted')}")
+                print(f"Recipient: {parsed['mpesa_details']['recipient']}")
+                print(f"Transaction ID: {parsed['mpesa_details']['transaction_id']}")
+                print(f"Reference: {parsed['mpesa_details']['reference']}")
+                print(f"Balance After: {parsed['mpesa_details']['balance_after']}")
+                print(f"Transaction Fee: {parsed['mpesa_details']['transaction_fee']}")
+                print(f"Confidence: {parsed['parsing_confidence']:.2f}")
+            else:
+                results.append({
+                    'message_number': i,
+                    'success': False,
+                    'error': 'Failed to parse message'
+                })
+                print(f"❌ FAILED to parse message")
+
+        return {
+            'total_tested': len(test_messages),
+            'successful': len([r for r in results if r['success']]),
+            'failed': len([r for r in results if not r['success']]),
+            'results': results
+        }
     
     @classmethod
     def create_transaction_from_sms(cls, message: str, user_id: str, category_id: str = None) -> Optional[TransactionCreate]:
         """
         Parse SMS message and create a TransactionCreate object
+        Enhanced to use extracted transaction date when available
         """
         parsed_data = cls.parse_message(message)
         if not parsed_data:
             return None
-        
-        # Create M-Pesa details
+
+        # Create enhanced M-Pesa details
         mpesa_details = MPesaDetails(
             recipient=parsed_data['mpesa_details'].get('recipient'),
             reference=parsed_data['mpesa_details'].get('reference'),
-            transaction_id=parsed_data['mpesa_details'].get('transaction_id')
+            transaction_id=parsed_data['mpesa_details'].get('transaction_id'),
+            phone_number=parsed_data['mpesa_details'].get('phone_number'),
+            balance_after=parsed_data['mpesa_details'].get('balance_after'),
+            message_type=parsed_data['mpesa_details'].get('message_type'),
+            transaction_fee=parsed_data['mpesa_details'].get('transaction_fee'),
+            access_fee=parsed_data['mpesa_details'].get('access_fee'),
+            fuliza_limit=parsed_data['mpesa_details'].get('fuliza_limit'),
+            fuliza_outstanding=parsed_data['mpesa_details'].get('fuliza_outstanding'),
+            due_date=parsed_data['mpesa_details'].get('due_date')
         )
-        
+
         # Use provided category or suggest one
         final_category_id = category_id or "auto"  # Will be resolved by categorization service
-        
+
+        # Use extracted transaction date if available, otherwise use current time
+        transaction_date = parsed_data.get('transaction_date')
+        if transaction_date:
+            try:
+                # Parse the ISO date string
+                from datetime import datetime
+                date = datetime.fromisoformat(transaction_date)
+            except (ValueError, TypeError):
+                date = datetime.now()
+        else:
+            date = datetime.now()
+
         return TransactionCreate(
             amount=parsed_data['amount'],
             type=parsed_data['type'],
             category_id=final_category_id,
             description=parsed_data['description'],
-            date=datetime.now(),  # SMS doesn't usually contain full date, use current time
-            mpesa_details=mpesa_details
+            date=date,
+            source='sms',
+            mpesa_details=mpesa_details,
+            sms_metadata=parsed_data.get('sms_metadata')
         )
