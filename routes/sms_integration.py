@@ -125,13 +125,23 @@ async def import_sms_messages(
                     suggested_category=parsed_data['suggested_category']
                 )
                 
+                # Use provided transaction date or current time
+                transaction_date = datetime.now()
+                if hasattr(import_request, 'transaction_date') and import_request.transaction_date:
+                    try:
+                        # Parse the ISO format date string
+                        transaction_date = datetime.fromisoformat(import_request.transaction_date.replace('Z', '+00:00'))
+                    except (ValueError, AttributeError):
+                        # If parsing fails, use current time
+                        transaction_date = datetime.now()
+
                 # Create transaction
                 transaction_data = TransactionCreate(
                     amount=parsed_data['amount'],
                     type=parsed_data['type'],
                     category_id=category_id,
                     description=parsed_data['description'],
-                    date=datetime.now(),  # Use current time since SMS doesn't contain full timestamp
+                    date=transaction_date,
                     source="sms",
                     mpesa_details=parsed_data['mpesa_details'],
                     sms_metadata=sms_metadata

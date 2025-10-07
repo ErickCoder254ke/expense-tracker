@@ -57,6 +57,7 @@ class SMSImportRequest(BaseModel):
     messages: list[str]
     auto_categorize: bool = True
     require_review: bool = False
+    transaction_date: Optional[str] = None  # ISO format date string
 
 class SMSImportResponse(BaseModel):
     total_messages: int
