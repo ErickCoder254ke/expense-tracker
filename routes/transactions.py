@@ -203,12 +203,55 @@ async def get_analytics_summary(
             {"$match": {**date_filter, "type": "expense"}},
             {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
         ]
-        
+
         income_result = await db.transactions.aggregate(income_pipeline).to_list(1)
         expense_result = await db.transactions.aggregate(expense_pipeline).to_list(1)
-        
+
         total_income = income_result[0]["total"] if income_result else 0
         total_expenses = expense_result[0]["total"] if expense_result else 0
+
+        # Calculate transaction fees summary
+        fees_pipeline = [
+            {"$match": date_filter},
+            {
+                "$group": {
+                    "_id": None,
+                    "total_transaction_fees": {
+                        "$sum": {
+                            "$ifNull": ["$mpesa_details.transaction_fee", 0]
+                        }
+                    },
+                    "total_access_fees": {
+                        "$sum": {
+                            "$ifNull": ["$mpesa_details.access_fee", 0]
+                        }
+                    },
+                    "fee_transactions_count": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$or": [
+                                        {"$gt": [{"$ifNull": ["$mpesa_details.transaction_fee", 0]}, 0]},
+                                        {"$gt": [{"$ifNull": ["$mpesa_details.access_fee", 0]}, 0]}
+                                    ]
+                                },
+                                1,
+                                0
+                            ]
+                        }
+                    }
+                }
+            }
+        ]
+
+        fees_result = await db.transactions.aggregate(fees_pipeline).to_list(1)
+        fees_data = fees_result[0] if fees_result else {
+            "total_transaction_fees": 0,
+            "total_access_fees": 0,
+            "fee_transactions_count": 0
+        }
+
+        total_fees = fees_data["total_transaction_fees"] + fees_data["total_access_fees"]
         
         # Get expenses by category
         category_pipeline = [
@@ -246,7 +289,13 @@ async def get_analytics_summary(
             "totals": {
                 "income": total_income,
                 "expenses": total_expenses,
-                "balance": total_income - total_expenses
+                "balance": total_income - total_expenses,
+                "fees": {
+                    "total_fees": total_fees,
+                    "transaction_fees": fees_data["total_transaction_fees"],
+                    "access_fees": fees_data["total_access_fees"],
+                    "fee_transactions_count": fees_data["fee_transactions_count"]
+                }
             },
             "categories": categories_by_category,
             "recent_transactions": recent_transactions

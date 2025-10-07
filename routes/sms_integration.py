@@ -293,27 +293,131 @@ async def create_transaction_from_parsed_sms(
 
 @router.get("/test-parser")
 async def test_parser_with_sample_messages():
-    """Test the parser with sample M-Pesa messages"""
-    sample_messages = [
+    """Test the parser with sample M-Pesa messages including user's specific examples"""
+    # User's specific examples from their request
+    user_examples = [
+        "TJ6CF6NDST Confirmed.Ksh30.00 sent to SIMON  NDERITU on 6/10/25 at 7:43 AM. New M-PESA balance is Ksh21.73. Transaction cost, Ksh0.00. Amount you can transact within the day is 499,970.00. Sign up for Lipa Na M-PESA Till online https://m-pesaforbusiness.co.ke",
+        "TJ6CF6OZYR Confirmed.     Ksh5.00 sent to SAFARICOM DATA BUNDLES for account SAFARICOM DATA BUNDLES on 6/10/25 at 5:14 PM. New M-PESA balance is Ksh16.73.       Transaction cost, Ksh0.00.",
+        "TJ6CF6OS29 Confirmed.You have received Ksh100.00 from Equity Bulk Account 300600 on 6/10/25 at 5:19 PM New M-PESA balance is Ksh116.73.  Separate personal and business funds through Pochi la Biashara on *334#.",
+        "TJ6CF6QGF0 Confirmed. Ksh15.00   sent to SAFARICOM DATA BUNDLES for account SAFARICOM DATA BUNDLES on 6/10/25 at 11:51 PM. New M-PESA balance is Ksh101.73. Transaction cost, Ksh0.00.",
+        "TJ7CF6QJUV Confirmed. Ksh30.00 sent to SIMON  NDERITU on 7/10/25 at 8:00 AM. New M-PESA balance is Ksh71.73. Transaction cost, Ksh0.00. Amount you can transact within the day is 499,970.00. Sign up for Lipa Na M-PESA Till online https://m-pesaforbusiness.co.ke"
+    ]
+
+    # Additional legacy examples for comparison
+    legacy_examples = [
         "You have received Ksh 1,250.00 from JOHN DOE 254722123456. New M-PESA balance is Ksh 3,450.00. Transaction cost, if any, is Ksh 0.00. Transaction ID ABC1DE2FG3. Confirmed.",
         "Ksh 200.00 sent to Safaricom Paybill 123456 on 12/01/2024 at 14:00. New M-PESA balance is Ksh 500.00. Transaction ID: XYZ123ABC.",
         "You have withdrawn Ksh 1,000.00 from 0722123456 - AGENT NAME. New M-PESA balance is Ksh 2,000.00. Transaction ID 98765ABC.",
         "You have purchased airtime Ksh 50.00 for 254700123456. New M-PESA balance is Ksh 450.00. Transaction ID: A1B2C3D.",
-        "You have paid Ksh 1,000.00 to COMPANY NAME PAYBILL 543210. Account number: INV12345. New M-PESA balance Ksh 2,500.00. Transaction: 1A2B3C4D.",
         "This is not an M-Pesa message"
     ]
-    
-    results = []
-    for message in sample_messages:
+
+    all_messages = user_examples + legacy_examples
+
+    results = {
+        "user_examples": [],
+        "legacy_examples": [],
+        "summary": {}
+    }
+
+    # Test user examples
+    for message in user_examples:
         parsed = MPesaParser.parse_message(message)
-        results.append({
+        results["user_examples"].append({
             "original_message": message,
             "parsed_successfully": parsed is not None,
-            "parsed_data": parsed
+            "parsed_data": parsed,
+            "confidence": parsed.get('parsing_confidence', 0) if parsed else 0,
+            "pattern_type": parsed.get('mpesa_details', {}).get('message_type') if parsed else None,
+            "transaction_id": parsed.get('mpesa_details', {}).get('transaction_id') if parsed else None,
+            "amount": parsed.get('amount') if parsed else None,
+            "recipient": parsed.get('mpesa_details', {}).get('recipient') if parsed else None,
+            "category": parsed.get('suggested_category') if parsed else None
         })
-    
+
+    # Test legacy examples
+    for message in legacy_examples:
+        parsed = MPesaParser.parse_message(message)
+        results["legacy_examples"].append({
+            "original_message": message,
+            "parsed_successfully": parsed is not None,
+            "parsed_data": parsed,
+            "confidence": parsed.get('parsing_confidence', 0) if parsed else 0
+        })
+
+    # Calculate summary statistics
+    user_success_count = sum(1 for r in results["user_examples"] if r["parsed_successfully"])
+    legacy_success_count = sum(1 for r in results["legacy_examples"] if r["parsed_successfully"])
+
+    results["summary"] = {
+        "total_messages": len(all_messages),
+        "user_examples_count": len(user_examples),
+        "user_examples_parsed": user_success_count,
+        "user_examples_success_rate": user_success_count / len(user_examples) * 100,
+        "legacy_examples_count": len(legacy_examples),
+        "legacy_examples_parsed": legacy_success_count,
+        "legacy_examples_success_rate": legacy_success_count / len(legacy_examples) * 100,
+        "overall_success_rate": (user_success_count + legacy_success_count) / len(all_messages) * 100
+    }
+
+    return results
+
+@router.post("/test-user-examples")
+async def test_user_specific_examples():
+    """Test the parser specifically with the user's provided SMS examples"""
+    user_examples = [
+        "TJ6CF6NDST Confirmed.Ksh30.00 sent to SIMON  NDERITU on 6/10/25 at 7:43 AM. New M-PESA balance is Ksh21.73. Transaction cost, Ksh0.00. Amount you can       transact within the day is 499,970.00. Sign up for Lipa Na M-PESA Till online https://m-pesaforbusiness.co.ke",
+        "TJ6CF6OZYR Confirmed.     Ksh5.00 sent to SAFARICOM DATA BUNDLES for account SAFARICOM DATA BUNDLES on 6/10/25 at 5:14 PM. New M-PESA balance is Ksh16.73.       Transaction cost, Ksh0.00.",
+        "TJ6CF6OS29 Confirmed.You have received Ksh100.00 from Equity Bulk Account 300600 on 6/10/25 at 5:19 PM New   M-PESA balance is Ksh116.73.  Separate personal and business funds through Pochi la Biashara on *334#.",
+        "TJ6CF6QGF0 Confirmed. Ksh15.00   sent to SAFARICOM DATA BUNDLES for account SAFARICOM DATA BUNDLES on 6/10/25 at 11:51 PM. New M-PESA balance is Ksh101.73. Transaction cost, Ksh0.00.",
+        "TJ7CF6QJUV Confirmed. Ksh30.00 sent to SIMON  NDERITU on 7/10/25 at 8:00 AM. New M-PESA balance is Ksh71.73. Transaction cost, Ksh0.00. Amount you can transact within the day is 499,970.00. Sign up for Lipa Na M-PESA Till onlinehttps://m-pesaforbusiness.co.ke"
+    ]
+
+    results = []
+    for i, message in enumerate(user_examples, 1):
+        parsed = MPesaParser.parse_message(message)
+
+        # Detailed analysis for each message
+        analysis = {
+            "message_number": i,
+            "original_message": message[:100] + "..." if len(message) > 100 else message,
+            "is_mpesa_message": MPesaParser.is_mpesa_message(message),
+            "parsed_successfully": parsed is not None,
+        }
+
+        if parsed:
+            analysis.update({
+                "transaction_id": parsed.get('mpesa_details', {}).get('transaction_id'),
+                "amount": parsed.get('amount'),
+                "type": parsed.get('type'),
+                "recipient": parsed.get('mpesa_details', {}).get('recipient'),
+                "balance_after": parsed.get('mpesa_details', {}).get('balance_after'),
+                "transaction_fee": parsed.get('mpesa_details', {}).get('transaction_fee'),
+                "confidence": parsed.get('parsing_confidence'),
+                "pattern_type": parsed.get('mpesa_details', {}).get('message_type'),
+                "suggested_category": parsed.get('suggested_category'),
+                "requires_review": parsed.get('requires_review'),
+                "description": parsed.get('description')
+            })
+        else:
+            analysis["error"] = "Failed to parse message"
+
+        results.append(analysis)
+
+    # Summary statistics
+    successful_parses = sum(1 for r in results if r["parsed_successfully"])
+
     return {
-        "total_messages": len(sample_messages),
-        "successfully_parsed": sum(1 for r in results if r["parsed_successfully"]),
-        "results": results
+        "test_description": "Testing parser with user's specific M-PESA SMS examples",
+        "total_messages": len(user_examples),
+        "successful_parses": successful_parses,
+        "success_rate": (successful_parses / len(user_examples)) * 100,
+        "results": results,
+        "expected_outcomes": {
+            "message_1": "Send to Simon Nderitu (Personal Transfer)",
+            "message_2": "Send to Safaricom Data Bundles (Utilities)",
+            "message_3": "Received from Equity Bulk Account (Financial Services/Income)",
+            "message_4": "Send to Safaricom Data Bundles (Utilities)",
+            "message_5": "Send to Simon Nderitu (Personal Transfer)"
+        }
     }

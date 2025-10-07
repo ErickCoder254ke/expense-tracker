@@ -9,7 +9,12 @@ class MPesaDetails(BaseModel):
     transaction_id: Optional[str] = None
     phone_number: Optional[str] = None
     balance_after: Optional[float] = None
-    message_type: Optional[str] = None  # received, sent, withdrawal, airtime, paybill, till
+    message_type: Optional[str] = None  # received, sent, withdrawal, airtime, paybill, till, fuliza_loan, fuliza_repayment
+    transaction_fee: Optional[float] = None
+    access_fee: Optional[float] = None
+    fuliza_limit: Optional[float] = None
+    fuliza_outstanding: Optional[float] = None
+    due_date: Optional[str] = None
 
 class SMSMetadata(BaseModel):
     original_message_hash: Optional[str] = None
@@ -17,6 +22,8 @@ class SMSMetadata(BaseModel):
     parsed_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
     requires_review: Optional[bool] = False
     suggested_category: Optional[str] = None
+    total_fees: Optional[float] = None
+    fee_breakdown: Optional[dict] = None
 
 class Transaction(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
