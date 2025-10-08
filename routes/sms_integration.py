@@ -3,6 +3,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from models.transaction import Transaction, TransactionCreate, SMSParseRequest, SMSImportRequest, SMSImportResponse, SMSMetadata
 from models.user import Category
 from services.mpesa_parser import MPesaParser
+from services.enhanced_sms_parser import EnhancedSMSParser
 from services.duplicate_detector import DuplicateDetector
 from services.categorization import CategorizationService
 from typing import List, Dict, Any
@@ -42,7 +43,38 @@ async def parse_single_sms(
             category_match = next((c for c in categories if c.name == parsed_data['suggested_category']), None)
             if category_match:
                 parsed_data['suggested_category_id'] = category_match.id
-        
+
+        # Also provide enhanced transaction breakdown preview
+        user_doc = await db.users.find_one({})
+        if user_doc:
+            user_id = str(user_doc["_id"])
+
+            # Create category mapping for enhanced parser
+            category_mapping = {}
+            for category in categories:
+                category_mapping[category.name] = category.id
+
+            # Get enhanced transaction breakdown
+            enhanced_transactions = EnhancedSMSParser.parse_message_to_transactions(
+                request.message, user_id, category_mapping
+            )
+
+            # Analyze transaction completeness
+            if enhanced_transactions:
+                analysis = EnhancedSMSParser.analyze_transaction_completeness(enhanced_transactions)
+                parsed_data["enhanced_breakdown"] = {
+                    "total_transactions": len(enhanced_transactions),
+                    "analysis": analysis,
+                    "transactions_preview": [
+                        {
+                            "role": t.transaction_role,
+                            "amount": t.amount,
+                            "type": t.type,
+                            "description": t.description
+                        } for t in enhanced_transactions
+                    ]
+                }
+
         return {
             "success": True,
             "parsed_data": parsed_data,
@@ -77,99 +109,76 @@ async def import_sms_messages(
         duplicates_found = 0
         parsing_errors = 0
         transactions_created = []
+        transaction_groups_created = []
+        total_monetary_movements = 0
         errors = []
+
+        # Create category mapping for enhanced parser
+        category_mapping = {}
+        for category in categories:
+            category_mapping[category.name] = category.id
         
-        for message in import_request.messages:
+        for i, message in enumerate(import_request.messages):
             try:
-                # Parse the message
-                parsed_data = MPesaParser.parse_message(message)
-                if not parsed_data:
-                    parsing_errors += 1
-                    errors.append(f"Could not parse message: {message[:50]}...")
-                    continue
-                
-                # Check for duplicates
-                duplicate_check = await DuplicateDetector.check_comprehensive_duplicate(
-                    db=db,
-                    user_id=user_id,
-                    amount=parsed_data['amount'],
-                    transaction_id=parsed_data['mpesa_details'].get('transaction_id'),
-                    message_hash=parsed_data['original_message_hash'],
-                    recipient=parsed_data['mpesa_details'].get('recipient')
-                )
-                
-                if duplicate_check['is_duplicate']:
+                print(f"\nProcessing message {i+1}: {message[:100]}...")
+
+                # Check for duplicates first
+                message_hash = DuplicateDetector.hash_message(message)
+                existing_transaction = await db.transactions.find_one({
+                    "sms_metadata.original_message_hash": message_hash
+                })
+
+                if existing_transaction:
+                    print(f"Duplicate found for message {i+1}")
                     duplicates_found += 1
-                    await DuplicateDetector.log_duplicate_attempt(db, user_id, parsed_data['original_message_hash'], duplicate_check)
                     continue
-                
-                # Auto-categorize
-                category_id = None
-                if import_request.auto_categorize:
-                    suggested_category = parsed_data.get('suggested_category')
-                    if suggested_category:
-                        category_match = next((c for c in categories if c.name == suggested_category), None)
-                        if category_match:
-                            category_id = category_match.id
-                
-                # Use default category if not found
-                if not category_id:
-                    default_category = next((c for c in categories if c.name == "Other"), None)
-                    category_id = default_category.id if default_category else categories[0].id
-                
-                # Create SMS metadata
-                sms_metadata = SMSMetadata(
-                    original_message_hash=parsed_data['original_message_hash'],
-                    parsing_confidence=parsed_data['parsing_confidence'],
-                    requires_review=parsed_data['requires_review'] or import_request.require_review,
-                    suggested_category=parsed_data['suggested_category']
+
+                # Use enhanced parser to get all transactions from this SMS
+                enhanced_transactions = EnhancedSMSParser.parse_message_to_transactions(
+                    message, user_id, category_mapping
                 )
-                
-                # Prioritize extracted transaction date from SMS, then user-provided, then current time
-                transaction_date = datetime.now()  # Default fallback
 
-                # First, try to use the extracted date from the SMS message
-                if parsed_data.get('transaction_date'):
-                    try:
-                        # Parse the extracted ISO date string from SMS
-                        transaction_date = datetime.fromisoformat(parsed_data['transaction_date'].replace('Z', '+00:00'))
-                        print(f"DEBUG: Using extracted SMS date: {transaction_date}")
-                    except (ValueError, AttributeError, TypeError) as e:
-                        print(f"DEBUG: Failed to parse extracted SMS date: {e}")
-                        transaction_date = None
+                if not enhanced_transactions:
+                    print(f"Failed to parse message {i+1} with enhanced parser")
+                    parsing_errors += 1
+                    errors.append(f"Message {i+1}: Could not parse M-Pesa format")
+                    continue
 
-                # If no extracted date or parsing failed, use user-provided transaction date
-                if transaction_date is None and hasattr(import_request, 'transaction_date') and import_request.transaction_date:
-                    try:
-                        # Parse the ISO format date string provided by user
-                        transaction_date = datetime.fromisoformat(import_request.transaction_date.replace('Z', '+00:00'))
-                        print(f"DEBUG: Using user-provided date: {transaction_date}")
-                    except (ValueError, AttributeError) as e:
-                        print(f"DEBUG: Failed to parse user-provided date: {e}")
-                        transaction_date = None
+                print(f"Enhanced parser created {len(enhanced_transactions)} transactions for message {i+1}")
 
-                # Final fallback to current time
-                if transaction_date is None:
-                    transaction_date = datetime.now()
-                    print(f"DEBUG: Using current time as fallback: {transaction_date}")
+                # Analyze the transaction group for completeness
+                analysis = EnhancedSMSParser.analyze_transaction_completeness(enhanced_transactions)
+                print(f"Transaction analysis: {analysis}")
 
-                # Create transaction
-                transaction_data = TransactionCreate(
-                    amount=parsed_data['amount'],
-                    type=parsed_data['type'],
-                    category_id=category_id,
-                    description=parsed_data['description'],
-                    date=transaction_date,
-                    source="sms",
-                    mpesa_details=parsed_data['mpesa_details'],
-                    sms_metadata=sms_metadata
-                )
-                
-                transaction = Transaction(**transaction_data.dict(), user_id=user_id)
-                result = await db.transactions.insert_one(transaction.dict())
-                
-                transactions_created.append(str(result.inserted_id))
+                # Insert all transactions from this SMS
+                group_transaction_ids = []
+                for transaction_create in enhanced_transactions:
+                    transaction = Transaction(
+                        user_id=user_id,
+                        **transaction_create.dict()
+                    )
+
+                    result = await db.transactions.insert_one(transaction.dict())
+                    transaction_id = str(result.inserted_id)
+                    transaction.id = transaction_id
+
+                    group_transaction_ids.append(transaction_id)
+                    transactions_created.append(transaction_id)
+                    total_monetary_movements += 1
+
+                    print(f"Created {transaction_create.transaction_role} transaction {transaction_id}: {transaction_create.description} - KSh {transaction_create.amount}")
+
+                # Track the transaction group
+                if enhanced_transactions:
+                    group_id = enhanced_transactions[0].transaction_group_id
+                    transaction_groups_created.append({
+                        "group_id": group_id,
+                        "transaction_ids": group_transaction_ids,
+                        "analysis": analysis
+                    })
+
                 successful_imports += 1
+                print(f"Successfully processed message {i+1} - created {len(enhanced_transactions)} transactions")
                 
             except Exception as e:
                 parsing_errors += 1
@@ -191,14 +200,17 @@ async def import_sms_messages(
         
         await db.sms_import_logs.insert_one(import_log)
         
-        return SMSImportResponse(
-            total_messages=len(import_request.messages),
-            successful_imports=successful_imports,
-            duplicates_found=duplicates_found,
-            parsing_errors=parsing_errors,
-            transactions_created=transactions_created,
-            errors=errors
-        )
+        return {
+            "total_messages": len(import_request.messages),
+            "successful_imports": successful_imports,
+            "duplicates_found": duplicates_found,
+            "parsing_errors": parsing_errors,
+            "transactions_created": transactions_created,
+            "transaction_groups_created": transaction_groups_created,
+            "total_monetary_movements": total_monetary_movements,
+            "errors": errors,
+            "enhanced_parsing": True
+        }
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error importing SMS messages: {str(e)}")

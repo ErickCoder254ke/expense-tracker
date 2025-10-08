@@ -37,6 +37,10 @@ class Transaction(BaseModel):
     mpesa_details: Optional[MPesaDetails] = None
     sms_metadata: Optional[SMSMetadata] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    # Transaction grouping for multi-transaction SMS messages
+    transaction_group_id: Optional[str] = None  # Links related transactions from same SMS
+    transaction_role: Optional[Literal["primary", "fee", "fuliza_deduction", "access_fee"]] = "primary"
+    parent_transaction_id: Optional[str] = None  # For fee/deduction transactions, reference to main transaction
 
 class TransactionCreate(BaseModel):
     amount: float
@@ -47,6 +51,10 @@ class TransactionCreate(BaseModel):
     source: Literal["manual", "sms", "api"] = "manual"
     mpesa_details: Optional[MPesaDetails] = None
     sms_metadata: Optional[SMSMetadata] = None
+    # Transaction grouping for multi-transaction SMS messages
+    transaction_group_id: Optional[str] = None
+    transaction_role: Optional[Literal["primary", "fee", "fuliza_deduction", "access_fee"]] = "primary"
+    parent_transaction_id: Optional[str] = None
 
 class TransactionUpdate(BaseModel):
     amount: Optional[float] = None
