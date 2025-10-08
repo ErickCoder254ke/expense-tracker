@@ -125,15 +125,33 @@ async def import_sms_messages(
                     suggested_category=parsed_data['suggested_category']
                 )
                 
-                # Use provided transaction date or current time
-                transaction_date = datetime.now()
-                if hasattr(import_request, 'transaction_date') and import_request.transaction_date:
+                # Prioritize extracted transaction date from SMS, then user-provided, then current time
+                transaction_date = datetime.now()  # Default fallback
+
+                # First, try to use the extracted date from the SMS message
+                if parsed_data.get('transaction_date'):
                     try:
-                        # Parse the ISO format date string
+                        # Parse the extracted ISO date string from SMS
+                        transaction_date = datetime.fromisoformat(parsed_data['transaction_date'].replace('Z', '+00:00'))
+                        print(f"DEBUG: Using extracted SMS date: {transaction_date}")
+                    except (ValueError, AttributeError, TypeError) as e:
+                        print(f"DEBUG: Failed to parse extracted SMS date: {e}")
+                        transaction_date = None
+
+                # If no extracted date or parsing failed, use user-provided transaction date
+                if transaction_date is None and hasattr(import_request, 'transaction_date') and import_request.transaction_date:
+                    try:
+                        # Parse the ISO format date string provided by user
                         transaction_date = datetime.fromisoformat(import_request.transaction_date.replace('Z', '+00:00'))
-                    except (ValueError, AttributeError):
-                        # If parsing fails, use current time
-                        transaction_date = datetime.now()
+                        print(f"DEBUG: Using user-provided date: {transaction_date}")
+                    except (ValueError, AttributeError) as e:
+                        print(f"DEBUG: Failed to parse user-provided date: {e}")
+                        transaction_date = None
+
+                # Final fallback to current time
+                if transaction_date is None:
+                    transaction_date = datetime.now()
+                    print(f"DEBUG: Using current time as fallback: {transaction_date}")
 
                 # Create transaction
                 transaction_data = TransactionCreate(
@@ -268,13 +286,21 @@ async def create_transaction_from_parsed_sms(
             suggested_category=parsed_data.get('suggested_category')
         )
         
+        # Use extracted transaction date if available, otherwise use current time
+        transaction_date = datetime.now()
+        if parsed_data.get('transaction_date'):
+            try:
+                transaction_date = datetime.fromisoformat(parsed_data['transaction_date'].replace('Z', '+00:00'))
+            except (ValueError, AttributeError, TypeError):
+                transaction_date = datetime.now()
+
         # Create transaction
         transaction_data = TransactionCreate(
             amount=parsed_data['amount'],
             type=parsed_data['type'],
             category_id=category_id,
             description=parsed_data['description'],
-            date=datetime.now(),
+            date=transaction_date,
             source="sms",
             mpesa_details=parsed_data.get('mpesa_details'),
             sms_metadata=sms_metadata

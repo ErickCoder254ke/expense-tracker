@@ -1,7 +1,7 @@
 import re
 import hashlib
 from typing import Optional, Dict, Any, List, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 from models.transaction import TransactionCreate, MPesaDetails
 import phonenumbers
 from phonenumbers import NumberParseException
@@ -22,14 +22,14 @@ class MPesaParser:
     PATTERNS = {
         # Enhanced patterns for newer M-Pesa message formats with transaction ID at start
         'modern_sent': [
-            # Enhanced pattern for modern sent messages with transaction ID at start
+            # Enhanced pattern for modern sent messages with transaction ID at start - handles various spacing
             # Pattern: "TJ6CF6NDST Confirmed.Ksh30.00 sent to SIMON  NDERITU on 6/10/25 at 7:43 AM. New M-PESA balance is Ksh21.73. Transaction cost, Ksh0.00."
-            r'([A-Z0-9]{6,12})\s+confirmed\.\s*(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+sent to\s+(.+?)(?:\s+for account\s+(.+?))?(?:\s+on\s+([0-9/\-]+)\s+at\s+([0-9:]+\s*(?:AM|PM)?)).*?(?:new m-?pesa balance.*?(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?.*?(?:transaction cost[:\s,]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?',
-            # Pattern for KPLC PREPAID and similar service payments
-            # "TJ4CF6I7HN Confirmed. Ksh100.00 sent to KPLC PREPAID for account 54405080323 on 4/10/25 at 4:38 PM"
-            r'([A-Z0-9]{6,12})\s+confirmed\.\s*(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+sent to\s+(.+?)\s+for account\s+(.+?)\s+on\s+([0-9/\-]+)\s+at\s+([0-9:]+\s*(?:AM|PM)?).*?(?:new m-?pesa balance.*?(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?.*?(?:transaction cost[:\s,]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?',
-            # Fallback pattern for variations without specific account
-            r'([A-Z0-9]{6,12})\s+confirmed\.\s*(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+sent to\s+(.+?)\s+on\s+([0-9/\-]+)\s+at\s+([0-9:]+\s*(?:AM|PM)?).*?(?:new m-?pesa balance.*?(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?.*?(?:transaction cost[:\s,]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?'
+            r'([A-Z0-9]{6,12})\s+confirmed\.\s*(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+sent to\s+(.+?)(?:\s+for account\s+(.+?))?\s+on\s+([0-9/\-]+)\s+at\s+([0-9:]+\s*(?:AM|PM)?)\s*[.\s]*.*?(?:new m-?pesa balance.*?(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?.*?(?:transaction cost[:\s,]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?',
+            # Pattern for messages with extra spaces and account info
+            # "TJ6CF6OZYR Confirmed.     Ksh5.00 sent to SAFARICOM DATA BUNDLES for account SAFARICOM DATA BUNDLES on 6/10/25 at 5:14 PM"
+            r'([A-Z0-9]{6,12})\s+confirmed\.\s+(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+sent to\s+(.+?)\s+for account\s+(.+?)\s+on\s+([0-9/\-]+)\s+at\s+([0-9:]+\s*(?:AM|PM)?).*?(?:new m-?pesa balance.*?(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?.*?(?:transaction cost[:\s,]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?',
+            # Fallback pattern for variations without explicit date/time - tries to extract from anywhere in message
+            r'([A-Z0-9]{6,12})\s+confirmed\.\s*(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+sent to\s+(.+?).*?(?:new m-?pesa balance.*?(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?.*?(?:transaction cost[:\s,]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?))?'
         ],
 
         'modern_received': [
@@ -47,9 +47,19 @@ class MPesaParser:
             r'([A-Z0-9]{6,12})\s+confirmed\.\s*fuliza m-pesa amount is\s+(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\.*\s*access fee charged\s+(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\.*\s*total fuliza m-pesa outstanding amount is\s+(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+due on\s+([0-9/]+).*?m-pesa balance.*?(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)'
         ],
 
-        # Fuliza repayment pattern
+        # Enhanced Fuliza repayment patterns (automatic and manual)
         'fuliza_repayment': [
-            r'([A-Z0-9]{6,12})\s+confirmed\.\s*(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+from your m-pesa has been used to.*?pay.*?fuliza.*?available fuliza m-pesa limit is\s+(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?).*?m-pesa balance is\s+(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)'
+            # Automatic repayment when receiving money
+            r'([A-Z0-9]{6,12})\s+confirmed\.\s*(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+from your m-pesa has been used to.*?pay.*?fuliza.*?available fuliza m-pesa limit is\s+(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?).*?m-pesa balance is\s+(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            # Manual Fuliza repayment
+            r'([A-Z0-9]{6,12})\s+confirmed\.\s*(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+sent to pay fuliza.*?outstanding.*?available fuliza m-pesa limit is\s+(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?).*?m-pesa balance is\s+(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            # Alternative pattern for automatic deduction
+            r'([A-Z0-9]{6,12})\s+confirmed\.\s*(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+.*?used to repay fuliza.*?outstanding.*?(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?).*?available.*?limit.*?(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?).*?balance.*?(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+        ],
+
+        # Compound transaction pattern (received money + automatic Fuliza deduction)
+        'compound_received_fuliza': [
+            r'([A-Z0-9]{6,12})\s+confirmed\.\s*you have received\s+(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+from\s+(.+?)\s+(?:([0-9]+)\s+)?.*?(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+.*?(?:used to|been used to).*?(?:pay|repay).*?fuliza.*?available.*?limit.*?(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?).*?balance.*?(?:ksh?|kes)\s*([0-9,]+(?:\.[0-9]{1,2})?)'
         ],
 
         # Legacy received pattern (for older message formats)
@@ -215,82 +225,183 @@ class MPesaParser:
         return ' '.join(cleaned_words)
 
     @classmethod
-    def parse_transaction_date(cls, date_str: str, time_str: str) -> Optional[str]:
+    def parse_transaction_date(cls, date_str: str, time_str: str = None) -> Optional[str]:
         """
         Enhanced transaction date and time parsing from M-Pesa message format
         Handles multiple formats: "6/10/25" and "7:43 AM" -> "2025-10-06 07:43:00"
-        Also handles "3/10/25" format and various time formats
+        Also handles combined date-time strings and various edge cases
         """
-        if not date_str or not time_str:
+        if not date_str:
             return None
 
         try:
+            # If time_str is None, try to extract both date and time from date_str
+            if time_str is None:
+                # Look for combined date-time patterns in the string
+                combined_pattern = r'(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})\s+(?:at\s+)?(\d{1,2}:\d{2}\s*(?:AM|PM)?)'
+                combined_match = re.search(combined_pattern, date_str, re.IGNORECASE)
+                if combined_match:
+                    date_str = combined_match.group(1)
+                    time_str = combined_match.group(2)
+
             # Handle different date formats
             date_patterns = [
-                r'(\d{1,2})/(\d{1,2})/(\d{2,4})',  # M/D/YY or MM/DD/YYYY
-                r'(\d{1,2})-(\d{1,2})-(\d{2,4})',  # M-D-YY or MM-DD-YYYY
+                r'(\d{1,2})/(\d{1,2})/(\d{2,4})',    # M/D/YY or MM/DD/YYYY (most common)
+                r'(\d{1,2})-(\d{1,2})-(\d{2,4})',    # M-D-YY or MM-DD-YYYY
+                r'(\d{2,4})[/\-](\d{1,2})[/\-](\d{1,2})',  # YYYY/MM/DD or YY/MM/DD
+                r'(\d{1,2})\.(\d{1,2})\.(\d{2,4})',  # M.D.YY (European style)
             ]
 
             date_match = None
-            for pattern in date_patterns:
+            date_format = None
+            for i, pattern in enumerate(date_patterns):
                 match = re.search(pattern, date_str)
                 if match:
                     date_match = match
+                    date_format = i
                     break
 
             if date_match:
-                month, day, year = date_match.groups()
+                if date_format in [0, 1, 3]:  # M/D/YY, M-D-YY, M.D.YY
+                    month, day, year = date_match.groups()
+                else:  # YYYY/MM/DD format
+                    year, month, day = date_match.groups()
 
                 # Convert to integers
                 month = int(month)
                 day = int(day)
                 year = int(year)
 
-                # Convert 2-digit year to 4-digit (enhanced logic)
+                # Enhanced year handling
                 if year < 100:
                     current_year = datetime.now().year
                     current_century = current_year // 100 * 100
+                    current_2digit = current_year % 100
 
-                    # If year is within 10 years in the future, assume current century
-                    if year <= (current_year % 100) + 10:
+                    # Smart year conversion logic
+                    if year <= current_2digit + 5:  # Within 5 years of current year
                         year += current_century
-                    else:
+                    elif year >= current_2digit + 50:  # More than 50 years difference, assume previous century
                         year += current_century - 100
+                    else:  # Between 5-50 years, assume next century
+                        year += current_century
+
+                # Date validation and correction
+                if month > 12 and day <= 12:
+                    # Swap month and day if month > 12 (common in D/M/Y vs M/D/Y confusion)
+                    month, day = day, month
 
                 # Enhanced time parsing
-                time_patterns = [
-                    r'(\d{1,2}):(\d{2})\s*(AM|PM)',  # 7:43 AM or 11:51 PM
-                    r'(\d{1,2}):(\d{2})',  # 24-hour format 07:43
-                ]
+                hour, minute = 0, 0  # Default values
 
-                time_match = None
-                for pattern in time_patterns:
-                    match = re.search(pattern, time_str.upper())
-                    if match:
-                        time_match = match
-                        break
+                if time_str:
+                    time_patterns = [
+                        r'(\d{1,2}):(\d{2})\s*(AM|PM)',     # 7:43 AM or 11:51 PM
+                        r'(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)',  # 7:43:00 AM
+                        r'(\d{1,2}):(\d{2})',               # 24-hour format 07:43
+                        r'(\d{1,2})\.(\d{2})',              # Alternative format 7.43
+                        r'(\d{1,2})(\d{2})\s*(AM|PM)',      # 743 AM (no colon)
+                    ]
 
-                if time_match:
-                    hour = int(time_match.group(1))
-                    minute = int(time_match.group(2))
+                    time_match = None
+                    for pattern in time_patterns:
+                        match = re.search(pattern, time_str.upper())
+                        if match:
+                            time_match = match
+                            break
 
-                    # Handle AM/PM conversion
-                    if len(time_match.groups()) >= 3 and time_match.group(3):
-                        am_pm = time_match.group(3).upper()
-                        if am_pm == 'PM' and hour != 12:
-                            hour += 12
-                        elif am_pm == 'AM' and hour == 12:
-                            hour = 0
+                    if time_match:
+                        groups = time_match.groups()
+                        hour = int(groups[0])
+                        minute = int(groups[1])
 
-                    # Validate date and time
+                        # Handle seconds if present
+                        if len(groups) > 2 and groups[2] and groups[2].isdigit():
+                            # Skip seconds for simplicity
+                            pass
+
+                        # Handle AM/PM conversion
+                        am_pm = None
+                        for group in groups:
+                            if group and group.upper() in ['AM', 'PM']:
+                                am_pm = group.upper()
+                                break
+
+                        if am_pm:
+                            if am_pm == 'PM' and hour != 12:
+                                hour += 12
+                            elif am_pm == 'AM' and hour == 12:
+                                hour = 0
+
+                # Enhanced validation
+                try:
+                    # Validate and create date object
                     if 1 <= month <= 12 and 1 <= day <= 31 and 0 <= hour <= 23 and 0 <= minute <= 59:
+                        # Handle month/day edge cases
+                        if month == 2 and day > 29:
+                            day = 29  # February edge case
+                        elif month in [4, 6, 9, 11] and day > 30:
+                            day = 30  # Months with 30 days
+                        elif day > 31:
+                            day = 31  # Max day limit
+
                         date_obj = datetime(year, month, day, hour, minute)
+
+                        # Additional validation: not too far in the future
+                        current_date = datetime.now()
+                        if date_obj > current_date + timedelta(days=365):
+                            # If date is more than a year in the future, assume wrong year interpretation
+                            if year >= 2000:
+                                year -= 100
+                                date_obj = datetime(year, month, day, hour, minute)
+
                         return date_obj.isoformat()
 
+                except ValueError as ve:
+                    # Handle invalid dates (like Feb 30)
+                    print(f"Invalid date created: {year}-{month}-{day} {hour}:{minute} - {ve}")
+                    pass
+
         except (ValueError, IndexError) as e:
-            # Log the error for debugging
             print(f"Date parsing error: {e} for date_str='{date_str}', time_str='{time_str}'")
             pass
+
+        return None
+
+    @classmethod
+    def extract_date_from_message(cls, message: str) -> Optional[str]:
+        """
+        Extract transaction date directly from message without separate date/time parameters
+        Useful for messages where date and time are embedded differently
+        """
+        # Enhanced patterns to find date-time in message
+        date_time_patterns = [
+            # "on 6/10/25 at 7:43 AM"
+            r'on\s+(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})\s+at\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?)',
+            # "6/10/25 at 7:43 AM"
+            r'(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})\s+at\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?)',
+            # "6/10/25 7:43 AM" (no "at")
+            r'(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?)',
+            # Just date "on 6/10/25"
+            r'on\s+(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})',
+            # Timestamp format "2025-10-06T19:43:00"
+            r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})',
+        ]
+
+        for pattern in date_time_patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                if len(match.groups()) == 2:
+                    return cls.parse_transaction_date(match.group(1), match.group(2))
+                elif len(match.groups()) == 1:
+                    if 'T' in match.group(1):  # ISO format
+                        try:
+                            parsed_date = datetime.fromisoformat(match.group(1))
+                            return parsed_date.isoformat()
+                        except ValueError:
+                            pass
+                    else:
+                        return cls.parse_transaction_date(match.group(1))
 
         return None
     
@@ -469,14 +580,41 @@ class MPesaParser:
         original_message = message
         normalized_message = cls.normalize_message(message)
         
-        # Try each pattern type
+        # Try each pattern type in order of specificity (most specific first)
+        pattern_order = [
+            'compound_received_fuliza',  # Most specific - compound transactions
+            'fuliza_loan',               # Fuliza loans
+            'fuliza_repayment',          # Fuliza repayments
+            'modern_sent',               # Modern sent transactions
+            'modern_received',           # Modern received transactions
+            'received',                  # Legacy received
+            'sent',                      # Legacy sent
+            'withdrawal',                # Withdrawals
+            'airtime',                   # Airtime purchases
+            'paybill',                   # Paybill payments
+            'till'                       # Till payments
+        ]
+
+        # Try patterns in specific order first
+        for pattern_type in pattern_order:
+            if pattern_type in cls.PATTERNS:
+                patterns = cls.PATTERNS[pattern_type]
+                for pattern in patterns:
+                    match = re.search(pattern, normalized_message, re.IGNORECASE)
+                    if match:
+                        return cls._extract_transaction_details(
+                            original_message, normalized_message, match, pattern_type
+                        )
+
+        # Try remaining patterns if no specific match found
         for pattern_type, patterns in cls.PATTERNS.items():
-            for pattern in patterns:
-                match = re.search(pattern, normalized_message, re.IGNORECASE)
-                if match:
-                    return cls._extract_transaction_details(
-                        original_message, normalized_message, match, pattern_type
-                    )
+            if pattern_type not in pattern_order:
+                for pattern in patterns:
+                    match = re.search(pattern, normalized_message, re.IGNORECASE)
+                    if match:
+                        return cls._extract_transaction_details(
+                            original_message, normalized_message, match, pattern_type
+                        )
         
         # If no pattern matches but it's clearly an M-Pesa message, try generic extraction
         return cls._generic_extraction(original_message, normalized_message)
@@ -511,19 +649,32 @@ class MPesaParser:
             amount = cls.extract_amount(groups[1]) if len(groups) > 1 and groups[1] else None
             recipient = cls.clean_recipient_name(groups[2]) if len(groups) > 2 and groups[2] else None
 
-            # Handle different pattern variations
-            if len(groups) >= 8:  # Full pattern with account and date
+            # Handle different pattern variations based on the specific pattern matched
+            if len(groups) >= 8 and groups[4] and groups[5]:  # Full pattern with account and date
                 reference = groups[3] if groups[3] else None
                 transaction_date = cls.parse_transaction_date(groups[4], groups[5]) if groups[4] and groups[5] else None
                 balance_after = cls.extract_amount(groups[6]) if groups[6] else None
                 transaction_fee = cls.extract_amount(groups[7]) if groups[7] else None
-            elif len(groups) >= 6:  # Pattern without account but with date
-                reference = None
-                transaction_date = cls.parse_transaction_date(groups[3], groups[4]) if groups[3] and groups[4] else None
-                balance_after = cls.extract_amount(groups[5]) if groups[5] else None
-                transaction_fee = None
+            elif len(groups) >= 6 and groups[3] and groups[4]:  # Pattern with date but might not have account in expected position
+                # Check if groups[3] and groups[4] look like date and time
+                if '/' in str(groups[3]) and (':' in str(groups[4]) or 'AM' in str(groups[4]) or 'PM' in str(groups[4])):
+                    reference = None
+                    transaction_date = cls.parse_transaction_date(groups[3], groups[4]) if groups[3] and groups[4] else None
+                    balance_after = cls.extract_amount(groups[5]) if len(groups) > 5 and groups[5] else None
+                    transaction_fee = cls.extract_amount(groups[6]) if len(groups) > 6 and groups[6] else None
+                else:
+                    # groups[3] might be account reference, look for date later
+                    reference = groups[3] if groups[3] else None
+                    # Try to find date/time in the original message
+                    date_time_match = re.search(r'on\s+([0-9/\-]+)\s+at\s+([0-9:]+\s*(?:AM|PM)?)', original_message, re.IGNORECASE)
+                    transaction_date = cls.parse_transaction_date(date_time_match.group(1), date_time_match.group(2)) if date_time_match else None
+                    balance_after = cls.extract_amount(groups[4]) if len(groups) > 4 and groups[4] else None
+                    transaction_fee = cls.extract_amount(groups[5]) if len(groups) > 5 and groups[5] else None
             else:
+                # Fallback: try to extract date/time from the original message regardless of groups
                 reference = None
+                date_time_match = re.search(r'on\s+([0-9/\-]+)\s+at\s+([0-9:]+\s*(?:AM|PM)?)', original_message, re.IGNORECASE)
+                transaction_date = cls.parse_transaction_date(date_time_match.group(1), date_time_match.group(2)) if date_time_match else None
                 balance_after = cls.extract_amount(groups[3]) if len(groups) > 3 and groups[3] else None
                 transaction_fee = None
 
@@ -533,16 +684,27 @@ class MPesaParser:
             recipient = cls.clean_recipient_name(groups[2]) if len(groups) > 2 and groups[2] else None
 
             # Handle different pattern variations for received messages
-            if len(groups) >= 7:  # Full pattern with account number and date
+            if len(groups) >= 7 and groups[4] and groups[5]:  # Full pattern with account number and date
                 reference = groups[3] if groups[3] else None  # Account number
                 transaction_date = cls.parse_transaction_date(groups[4], groups[5]) if groups[4] and groups[5] else None
                 balance_after = cls.extract_amount(groups[6]) if groups[6] else None
-            elif len(groups) >= 5:  # Pattern with date but no account
-                reference = None
-                transaction_date = cls.parse_transaction_date(groups[3], groups[4]) if groups[3] and groups[4] else None
-                balance_after = cls.extract_amount(groups[5]) if len(groups) > 5 and groups[5] else None
+            elif len(groups) >= 5:  # Pattern might have date
+                # Check if groups[3] and groups[4] look like date and time
+                if groups[3] and groups[4] and '/' in str(groups[3]) and (':' in str(groups[4]) or 'AM' in str(groups[4]) or 'PM' in str(groups[4])):
+                    reference = None
+                    transaction_date = cls.parse_transaction_date(groups[3], groups[4]) if groups[3] and groups[4] else None
+                    balance_after = cls.extract_amount(groups[5]) if len(groups) > 5 and groups[5] else None
+                else:
+                    # Try to find date/time in the original message
+                    reference = groups[3] if groups[3] and groups[3].isdigit() else None  # Account number if numeric
+                    date_time_match = re.search(r'on\s+([0-9/\-]+)\s+at\s+([0-9:]+\s*(?:AM|PM)?)', original_message, re.IGNORECASE)
+                    transaction_date = cls.parse_transaction_date(date_time_match.group(1), date_time_match.group(2)) if date_time_match else None
+                    balance_after = cls.extract_amount(groups[4]) if len(groups) > 4 and groups[4] else None
             else:
+                # Fallback: try to extract date/time from the original message regardless of groups
                 reference = None
+                date_time_match = re.search(r'on\s+([0-9/\-]+)\s+at\s+([0-9:]+\s*(?:AM|PM)?)', original_message, re.IGNORECASE)
+                transaction_date = cls.parse_transaction_date(date_time_match.group(1), date_time_match.group(2)) if date_time_match else None
                 balance_after = cls.extract_amount(groups[3]) if len(groups) > 3 and groups[3] else None
 
         elif pattern_type == 'fuliza_loan':
@@ -557,9 +719,38 @@ class MPesaParser:
         elif pattern_type == 'fuliza_repayment':
             transaction_id = groups[0].strip() if len(groups) > 0 and groups[0] else None
             amount = cls.extract_amount(groups[1]) if len(groups) > 1 and groups[1] else None
-            fuliza_limit = cls.extract_amount(groups[2]) if len(groups) > 2 and groups[2] else None
-            balance_after = cls.extract_amount(groups[3]) if len(groups) > 3 and groups[3] else None
+
+            # Handle different fuliza repayment patterns
+            if len(groups) >= 4:
+                fuliza_limit = cls.extract_amount(groups[2]) if groups[2] else None
+                balance_after = cls.extract_amount(groups[3]) if groups[3] else None
+            elif len(groups) >= 5:  # For the alternative pattern
+                fuliza_outstanding = cls.extract_amount(groups[2]) if groups[2] else None
+                fuliza_limit = cls.extract_amount(groups[3]) if groups[3] else None
+                balance_after = cls.extract_amount(groups[4]) if groups[4] else None
+
             recipient = "Fuliza M-PESA Repayment"
+
+        elif pattern_type == 'compound_received_fuliza':
+            # This is a complex transaction: user received money + automatic Fuliza deduction
+            transaction_id = groups[0].strip() if len(groups) > 0 and groups[0] else None
+            received_amount = cls.extract_amount(groups[1]) if len(groups) > 1 and groups[1] else None
+            sender = cls.clean_recipient_name(groups[2]) if len(groups) > 2 and groups[2] else None
+            reference = groups[3] if len(groups) > 3 and groups[3] and groups[3].isdigit() else None
+            fuliza_deduction = cls.extract_amount(groups[4]) if len(groups) > 4 and groups[4] else None
+            fuliza_limit = cls.extract_amount(groups[5]) if len(groups) > 5 and groups[5] else None
+            balance_after = cls.extract_amount(groups[6]) if len(groups) > 6 and groups[6] else None
+
+            # For compound transactions, we treat the main transaction as receiving money
+            # The Fuliza deduction will be recorded in the metadata
+            amount = received_amount
+            recipient = sender
+
+            # Store Fuliza deduction details
+            fuliza_outstanding = None  # Could be calculated: previous_outstanding - fuliza_deduction
+
+            # Add note about automatic deduction in description - this will be used later
+            # Store deduction info in metadata for the description generation
 
         elif pattern_type == 'received':
             amount = cls.extract_amount(groups[0]) if len(groups) > 0 and groups[0] else None
@@ -727,6 +918,11 @@ class MPesaParser:
                 else:
                     return f"Received from {recipient}"
             return "Money Received"
+        elif pattern_type == 'compound_received_fuliza':
+            # Special handling for compound transactions
+            base_desc = f"Received from {recipient}" if recipient else "Money Received"
+            # Note: Fuliza deduction info will be included in transaction metadata
+            return f"{base_desc} (with auto Fuliza repayment)"
         elif pattern_type in ['sent', 'modern_sent']:
             if recipient:
                 # Enhanced descriptions for common recipients
@@ -828,70 +1024,150 @@ class MPesaParser:
     def _extract_all_fees(cls, message: str) -> Dict[str, float]:
         """
         Enhanced fee extraction to capture all possible fees from M-Pesa messages
+        Improved to handle more fee types and edge cases
         """
         fees = {}
         message_lower = message.lower()
 
-        # Enhanced transaction cost patterns
+        # Enhanced transaction cost patterns (most common M-Pesa fees)
         transaction_fee_patterns = [
             r'transaction cost[:\s,]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
             r'transaction fee[:\s,]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
-            r'charge[:\s,]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
-            r'cost[:\s,]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            r'mpesa fee[:\s,]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            r'charge[d]?[:\s,]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            # Handle "cost, Ksh0.00" format
+            r'cost[,\s]+(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
         ]
 
         for pattern in transaction_fee_patterns:
             match = re.search(pattern, message_lower)
             if match:
                 fee = cls.extract_amount(match.group(1))
-                if fee and fee > 0:
+                if fee is not None and fee >= 0:  # Include zero fees for tracking
                     fees['transaction_fee'] = fee
                     break
 
-        # Enhanced access fee patterns (Fuliza)
+        # Enhanced access fee patterns (Fuliza specific)
         access_fee_patterns = [
             r'access fee charged[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
             r'access fee[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
             r'fuliza.*?fee[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            r'fuliza.*?charged[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
         ]
 
         for pattern in access_fee_patterns:
             match = re.search(pattern, message_lower)
             if match:
                 fee = cls.extract_amount(match.group(1))
-                if fee and fee > 0:
+                if fee is not None and fee > 0:
                     fees['access_fee'] = fee
                     break
 
-        # Additional fee types
+        # Service fee patterns (bank transfers, etc.)
+        service_fee_patterns = [
+            r'service fee[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            r'service charge[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+        ]
 
-        # Service fee pattern
-        service_fee_match = re.search(r'service fee[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)', message_lower)
-        if service_fee_match:
-            fee = cls.extract_amount(service_fee_match.group(1))
-            if fee and fee > 0:
-                fees['service_fee'] = fee
+        for pattern in service_fee_patterns:
+            match = re.search(pattern, message_lower)
+            if match:
+                fee = cls.extract_amount(match.group(1))
+                if fee is not None and fee > 0:
+                    fees['service_fee'] = fee
+                    break
 
-        # Processing fee pattern
-        processing_fee_match = re.search(r'processing fee[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)', message_lower)
-        if processing_fee_match:
-            fee = cls.extract_amount(processing_fee_match.group(1))
-            if fee and fee > 0:
-                fees['processing_fee'] = fee
+        # Processing fee patterns
+        processing_fee_patterns = [
+            r'processing fee[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            r'handling fee[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+        ]
 
-        # ATM fee pattern
-        atm_fee_match = re.search(r'atm fee[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)', message_lower)
-        if atm_fee_match:
-            fee = cls.extract_amount(atm_fee_match.group(1))
-            if fee and fee > 0:
-                fees['atm_fee'] = fee
+        for pattern in processing_fee_patterns:
+            match = re.search(pattern, message_lower)
+            if match:
+                fee = cls.extract_amount(match.group(1))
+                if fee is not None and fee > 0:
+                    fees['processing_fee'] = fee
+                    break
 
-        # Bank charges pattern
-        bank_charge_match = re.search(r'bank charge[s]?[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)', message_lower)
-        if bank_charge_match:
-            fee = cls.extract_amount(bank_charge_match.group(1))
-            if fee and fee > 0:
-                fees['bank_charge'] = fee
+        # ATM and withdrawal fee patterns
+        atm_fee_patterns = [
+            r'atm fee[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            r'withdrawal fee[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            r'cash withdrawal fee[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+        ]
+
+        for pattern in atm_fee_patterns:
+            match = re.search(pattern, message_lower)
+            if match:
+                fee = cls.extract_amount(match.group(1))
+                if fee is not None and fee > 0:
+                    fees['atm_fee'] = fee
+                    break
+
+        # Bank and agent charges
+        bank_charge_patterns = [
+            r'bank charge[s]?[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            r'agent fee[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            r'commission[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+        ]
+
+        for pattern in bank_charge_patterns:
+            match = re.search(pattern, message_lower)
+            if match:
+                fee = cls.extract_amount(match.group(1))
+                if fee is not None and fee > 0:
+                    fees['bank_charge'] = fee
+                    break
+
+        # Paybill and Till specific fees
+        paybill_fee_patterns = [
+            r'paybill fee[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            r'till fee[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            r'merchant fee[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+        ]
+
+        for pattern in paybill_fee_patterns:
+            match = re.search(pattern, message_lower)
+            if match:
+                fee = cls.extract_amount(match.group(1))
+                if fee is not None and fee > 0:
+                    fees['merchant_fee'] = fee
+                    break
+
+        # Interest charges (loans, overdrafts)
+        interest_patterns = [
+            r'interest[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            r'interest charge[d]?[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            r'loan interest[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+        ]
+
+        for pattern in interest_patterns:
+            match = re.search(pattern, message_lower)
+            if match:
+                fee = cls.extract_amount(match.group(1))
+                if fee is not None and fee > 0:
+                    fees['interest_charge'] = fee
+                    break
+
+        # Late payment fees
+        late_fee_patterns = [
+            r'late fee[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            r'penalty[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+            r'late payment[:\s]*(?:ksh?|kes)?\s*([0-9,]+(?:\.[0-9]{1,2})?)',
+        ]
+
+        for pattern in late_fee_patterns:
+            match = re.search(pattern, message_lower)
+            if match:
+                fee = cls.extract_amount(match.group(1))
+                if fee is not None and fee > 0:
+                    fees['late_fee'] = fee
+                    break
+
+        # Remove zero-value fees to avoid clutter (except transaction_fee which is important for tracking)
+        fees = {k: v for k, v in fees.items() if v > 0 or k == 'transaction_fee'}
 
         return fees
 
