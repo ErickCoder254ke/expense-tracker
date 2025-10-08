@@ -42,7 +42,24 @@ from routes import auth, transactions, categories, sms_integration, budgets
 # Add your routes to the router instead of directly to app
 @api_router.get("/")
 async def root():
-    return {"message": "M-Pesa Expense Tracker API"}
+    return {"message": "M-Pesa Expense Tracker API", "status": "running", "version": "1.0.0"}
+
+@api_router.get("/health")
+async def health_check():
+    """Health check endpoint to verify backend connectivity"""
+    try:
+        # Test database connectivity
+        await db.admin.command('ping')
+        db_status = "connected"
+    except Exception as e:
+        db_status = f"error: {str(e)}"
+
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "database": db_status,
+        "message": "M-Pesa Expense Tracker Backend is running"
+    }
 
 @api_router.post("/status", response_model=StatusCheck)
 async def create_status_check(input: StatusCheckCreate):

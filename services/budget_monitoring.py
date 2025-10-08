@@ -6,6 +6,7 @@ from models.user import Category
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 from enum import Enum
+from bson import ObjectId
 import calendar
 
 class AlertSeverity(Enum):
@@ -138,7 +139,9 @@ class BudgetMonitoringService:
             budget = Budget(**{**budget_doc, "id": str(budget_doc["_id"])})
             
             # Get category info
-            category_doc = await self.db.categories.find_one({"_id": budget.category_id})
+            category_doc = await self.db.categories.find_one({
+                "_id": ObjectId(budget.category_id) if ObjectId.is_valid(budget.category_id) else budget.category_id
+            })
             if not category_doc:
                 continue
             

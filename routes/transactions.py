@@ -376,6 +376,37 @@ async def get_analytics_summary(
             "current_outstanding": 0
         }
 
+        # Get expenses by category
+        category_pipeline = [
+            {"$match": {**date_filter, "type": "expense"}},
+            {"$group": {"_id": "$category_id", "total": {"$sum": "$amount"}, "count": {"$sum": 1}}},
+            {"$sort": {"total": -1}}
+        ]
+
+        category_results = await db.transactions.aggregate(category_pipeline).to_list(20)
+
+        # Get category names
+        categories_by_category = {}
+        for result in category_results:
+            category_doc = await db.categories.find_one({"_id": ObjectId(result["_id"]) if ObjectId.is_valid(result["_id"]) else result["_id"]})
+            if category_doc:
+                categories_by_category[result["_id"]] = {
+                    "name": category_doc["name"],
+                    "color": category_doc["color"],
+                    "icon": category_doc["icon"],
+                    "amount": result["total"],
+                    "count": result["count"]
+                }
+
+        # Get recent transactions
+        recent_transactions_docs = await db.transactions.find(date_filter).sort("date", -1).limit(5).to_list(5)
+        recent_transactions = []
+
+        for doc in recent_transactions_docs:
+            doc["id"] = str(doc["_id"])
+            del doc["_id"]
+            recent_transactions.append(Transaction(**doc).dict())
+
         # Add fuliza summary to response if there's activity
         response_data = {
             "period": {"start_date": start_date, "end_date": end_date},
@@ -659,42 +690,6 @@ async def get_transaction_charges_analytics(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting charges analytics: {str(e)}")
-        
-        # Get expenses by category
-        category_pipeline = [
-            {"$match": {**date_filter, "type": "expense"}},
-            {"$group": {"_id": "$category_id", "total": {"$sum": "$amount"}, "count": {"$sum": 1}}},
-            {"$sort": {"total": -1}}
-        ]
-        
-        category_results = await db.transactions.aggregate(category_pipeline).to_list(20)
-        
-        # Get category names
-        categories_by_category = {}
-        for result in category_results:
-            category_doc = await db.categories.find_one({"_id": ObjectId(result["_id"]) if ObjectId.is_valid(result["_id"]) else result["_id"]})
-            if category_doc:
-                categories_by_category[result["_id"]] = {
-                    "name": category_doc["name"],
-                    "color": category_doc["color"],
-                    "icon": category_doc["icon"],
-                    "amount": result["total"],
-                    "count": result["count"]
-                }
-        
-        # Get recent transactions
-        recent_transactions_docs = await db.transactions.find(date_filter).sort("date", -1).limit(5).to_list(5)
-        recent_transactions = []
-        
-        for doc in recent_transactions_docs:
-            doc["id"] = str(doc["_id"])
-            del doc["_id"]
-            recent_transactions.append(Transaction(**doc))
-        
-        return response_data
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error getting analytics: {str(e)}")
 
 @router.get("/debug/database")
 async def debug_database(db: AsyncIOMotorDatabase = Depends(get_db)):
